@@ -173,6 +173,11 @@ try {
 
     // Diagnostics snapshot (CopyDiagnosticsButton / ReportStep)
     getDiagnostics: (): Promise<PublicDiagnosticsSnapshot> => ipcRenderer.invoke('get-diagnostics'),
+    saveSupportLog: (extraContext?: string | null): Promise<{ fileName: string; savedTo: 'Desktop' }> =>
+      ipcRenderer.invoke('log:save-support-log', extraContext ?? null),
+    logUiEvent: (eventName: string, detail?: Record<string, unknown> | null): Promise<boolean> =>
+      ipcRenderer.invoke('log:ui-event', eventName, detail ?? null),
+    notifyRendererReady: (): Promise<boolean> => ipcRenderer.invoke('renderer:ready'),
   });
 
   // Confirm bridge wired

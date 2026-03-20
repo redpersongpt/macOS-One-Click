@@ -90,6 +90,9 @@ declare global {
       runSafeSimulation: (profile: import('../electron/configGenerator').HardwareProfile) => Promise<import('../electron/safeSimulation').SafeSimulationResult>;
       getResourcePlan: (profile: import('../electron/configGenerator').HardwareProfile, efiPath?: string | null) => Promise<import('../electron/resourcePlanner').ResourcePlan>;
       getDiagnostics: () => Promise<import('../electron/releaseDiagnostics').PublicDiagnosticsSnapshot>;
+      saveSupportLog: (extraContext?: string | null) => Promise<{ fileName: string; savedTo: 'Desktop' }>;
+      logUiEvent: (eventName: string, detail?: Record<string, unknown> | null) => Promise<boolean>;
+      notifyRendererReady: () => Promise<boolean>;
     };
   }
 }

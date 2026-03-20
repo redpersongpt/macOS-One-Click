@@ -1,5 +1,16 @@
 const HOME_PATH_PATTERNS: Array<{ pattern: RegExp; replacement: (match: string) => string }> = [
   {
+    pattern: /file:\/\/\/[^\s"'`,\]]+/g,
+    replacement: (match) => {
+      try {
+        const pathname = decodeURIComponent(match.replace(/^file:\/\//, ''));
+        return summarizeAbsolutePath(pathname) ?? '[path:redacted]';
+      } catch {
+        return '[path:redacted]';
+      }
+    },
+  },
+  {
     pattern: /\/Users\/[^/\s"'`,\]]+(?:\/[^\s"'`,\]]+)*/g,
     replacement: (match) => summarizeAbsolutePath(match) ?? '[path:redacted]',
   },
@@ -18,6 +29,10 @@ const HOME_PATH_PATTERNS: Array<{ pattern: RegExp; replacement: (match: string) 
   {
     pattern: /\/var\/folders\/[^\s"'`,\]]+/g,
     replacement: () => '[path:temp]',
+  },
+  {
+    pattern: /\/(?:Applications|Volumes|Library|System|opt|etc|usr|tmp)\/[^\s"'`,\]]+(?:\/[^\s"'`,\]]+)*/g,
+    replacement: (match) => summarizeAbsolutePath(match) ?? '[path:redacted]',
   },
 ];
 

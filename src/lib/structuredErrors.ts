@@ -69,7 +69,7 @@ const ERROR_MAP: Array<{
     },
   },
   {
-    test: m => m.includes('INSUFFICIENT_SPACE') || m.includes('capacity, but this operation requires'),
+    test: m => m.includes('insufficient_space') || m.includes('capacity, but this operation requires'),
     structured: {
       title: 'Insufficient USB capacity',
       what: 'The selected USB drive is too small for the full macOS recovery installer.',
@@ -78,7 +78,7 @@ const ERROR_MAP: Array<{
     },
   },
   {
-    test: m => m.includes('SAFETY BLOCK') || m.includes('system/boot disk') || m.includes('system disk'),
+    test: m => m.includes('safety block') || m.includes('system/boot disk') || m.includes('system disk'),
     structured: {
       title: 'System disk blocked',
       what: 'The selected drive is your main system disk. Flashing it would erase your operating system.',
@@ -87,7 +87,7 @@ const ERROR_MAP: Array<{
     },
   },
   {
-    test: m => m.includes('MBR_PARTITION_TABLE') || m.includes('MBR partition'),
+    test: m => m.includes('mbr_partition_table') || m.includes('mbr partition'),
     structured: {
       title: 'MBR partition table',
       what: 'The drive uses an MBR partition table. OpenCore requires GPT.',
@@ -98,7 +98,7 @@ const ERROR_MAP: Array<{
     },
   },
   {
-    test: m => m.includes('DEVICE_NOT_FOUND') || m.includes('not found') || m.includes('disconnected'),
+    test: m => m.includes('device_not_found') || m.includes('not found') || m.includes('disconnected'),
     structured: {
       title: 'Drive not found',
       what: 'The selected drive could not be found. It may have been disconnected.',
@@ -107,7 +107,7 @@ const ERROR_MAP: Array<{
     },
   },
   {
-    test: m => m.includes('Permission denied') || m.includes('EACCES') || m.includes('EPERM') || m.includes('as Administrator') || m.includes('sudo'),
+    test: m => m.includes('permission denied') || m.includes('eacces') || m.includes('eperm') || m.includes('as administrator') || m.includes('sudo'),
     structured: {
       title: 'Permission denied',
       what: 'The app does not have permission to write to this drive.',
@@ -117,7 +117,34 @@ const ERROR_MAP: Array<{
     },
   },
   {
-    test: m => m.includes('ENOSPC') || m.includes('not enough disk space') || m.includes('disk space'),
+    test: m => m.includes('apple recovery server rejected the request') || m.includes('apple rejected the recovery request'),
+    structured: {
+      title: 'Apple rejected the recovery request',
+      what: 'Apple’s recovery service refused this download request for the selected macOS target.',
+      nextStep: 'Try an older macOS version, use manual recovery import, or switch to EFI-only mode if you already have installer media.',
+      retryable: true,
+    },
+  },
+  {
+    test: m => m.includes('build will fail') || m.includes('pre-build check failed'),
+    structured: {
+      title: 'Build is blocked by a concrete pre-check',
+      what: 'The app found a specific dependency or environment blocker before the EFI build could succeed.',
+      nextStep: 'Fix the blocker shown in the report, then retry the build instead of repeating the same build blindly.',
+      retryable: true,
+    },
+  },
+  {
+    test: m => m.includes('efi build contract failed'),
+    structured: {
+      title: 'EFI verification failed after generation',
+      what: 'The generated EFI did not pass the on-disk integrity contract.',
+      nextStep: 'Inspect the missing or failed component named in the report, then rebuild the EFI once the dependency issue is fixed.',
+      retryable: true,
+    },
+  },
+  {
+    test: m => m.includes('enospc') || m.includes('not enough disk space') || m.includes('disk space'),
     structured: {
       title: 'Not enough disk space',
       what: 'There is not enough free space to complete this operation.',
@@ -128,7 +155,7 @@ const ERROR_MAP: Array<{
     },
   },
   {
-    test: m => m.includes('Timed out') || m.includes('timed out') || m.includes('timeout'),
+    test: m => m.includes('timed out') || m.includes('timeout'),
     structured: {
       title: 'Operation timed out',
       what: 'The operation did not complete within the expected time.',

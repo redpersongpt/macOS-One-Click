@@ -230,6 +230,45 @@ const TEMPLATES: SuggestionTemplate[] = [
     },
   },
 
+  // ── Recovery auth rejection (classified message) ─────────────────────────
+  {
+    test: m => m.includes('apple recovery server rejected the request') || m.includes('apple rejected the recovery request'),
+    code: 'recovery_auth_rejected',
+    category: 'network_error',
+    build: () => ({
+      title: 'Apple rejected the recovery request',
+      explanation: 'Apple’s recovery service refused the selected download request. This is a server-side policy limit, not a disk or renderer problem.',
+      severity: 'critical',
+      decisionSummary: '',
+      primaryAction: act(
+        'Try an older recommended macOS version or use manual recovery import',
+        'high',
+        'Older versions and manual import avoid the exact server-side rejection path that just failed',
+        'fix_now',
+        'The download request itself was rejected by Apple, so repeating the same request blindly is unlikely to help',
+        'You either move to a version with a higher success rate or bypass Apple’s automated rejection path with a manual import',
+      ),
+      alternatives: [
+        act(
+          'Switch to EFI-only mode if you already have separate installer media',
+          'high',
+          'EFI generation can still continue without relying on Apple’s recovery service',
+          'try_alternative',
+          'The blocked piece is recovery acquisition, not EFI generation',
+          'You keep a valid bootloader build and provide installer media separately',
+        ),
+        act(
+          'Retry once later after changing macOS target selection',
+          'low',
+          'A plain retry against the same target is lower confidence than changing the recovery path',
+          'learn_more',
+          'The rejection came from Apple’s service, not a local transient write failure',
+          'You may get a different outcome if you change the requested macOS path',
+        ),
+      ],
+    }),
+  },
+
   // ── Recovery download interrupted ─────────────────────────────
   {
     test: m => m.includes('recovery') && (m.includes('failed') || m.includes('error') || m.includes('interrupted')),
@@ -326,6 +365,68 @@ const TEMPLATES: SuggestionTemplate[] = [
         ],
       };
     },
+  },
+
+  // ── Pre-build blockers from deterministic/preflight checks ───────────────
+  {
+    test: m => m.includes('pre-build check failed') || m.includes('build will fail'),
+    code: 'build_precheck_failed',
+    category: 'validation_error',
+    build: () => ({
+      title: 'Build is blocked before generation',
+      explanation: 'A concrete dependency, environment, or download blocker was found before the EFI build could succeed.',
+      severity: 'critical',
+      decisionSummary: '',
+      primaryAction: act(
+        'Fix the blocker named in the report before rebuilding',
+        'high',
+        'The app already found a specific failure point, so repeating the same build without fixing it is low-value',
+        'fix_now',
+        'Preflight and deterministic checks are meant to stop a known-bad build before time is wasted',
+        'The next build starts from a materially better state instead of repeating the same failure',
+      ),
+      alternatives: [
+        act(
+          'Copy the report and inspect the blocker details before changing anything else',
+          'medium',
+          'The diagnostics already contain the concrete blocker that stopped the build',
+          'learn_more',
+          'This avoids random fixes when the failing dependency is already known',
+          'You can address the exact missing tool, blocked download, or environment issue',
+        ),
+      ],
+    }),
+  },
+
+  // ── EFI on-disk verification failure ──────────────────────────────────────
+  {
+    test: m => m.includes('efi build contract failed'),
+    code: 'efi_build_contract_failed',
+    category: 'validation_error',
+    build: () => ({
+      title: 'Generated EFI failed on-disk verification',
+      explanation: 'The EFI was generated, but at least one required component did not land on disk correctly.',
+      severity: 'critical',
+      decisionSummary: '',
+      primaryAction: act(
+        'Inspect the failed component named in the report, then rebuild once the dependency issue is fixed',
+        'high',
+        'The contract failure means the app already knows a concrete component did not verify',
+        'fix_now',
+        'This is an integrity failure after build generation, not a vague UI error',
+        'The rebuilt EFI passes the on-disk contract and can move to validation cleanly',
+      ),
+      alternatives: [
+        act(
+          'Copy the report and open the EFI folder to confirm the missing file or empty kext directory',
+          'medium',
+          'Manual inspection is useful when the same post-build verification failure repeats',
+          'learn_more',
+          'The contract output points to the exact failed check',
+          'You can verify whether the problem is a missing file, empty directory, or broken download',
+        ),
+      ],
+    }),
   },
 
   // ── Kext fetch failure ────────────────────────────────────────
@@ -1013,24 +1114,56 @@ function enhanceWithContext(suggestion: Suggestion, ctx: SuggestionContext): Sug
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-const UNKNOWN_FALLBACK: Suggestion = {
-  code: "unknown_error",
-  category: "environment_error",
-  severity: "actionable",
-  title: "Something went wrong",
-  explanation: "An unexpected error occurred while processing your request.",
-  decisionSummary: "Recommended: Retry the last step — this resolves most transient issues.",
-  primaryAction: {
-    text: "Retry the last step",
-    confidence: "medium",
-    confidenceReason: "Most unknown errors are transient and succeed on retry.",
-    group: "fix_now",
-    reason: "The operation may have failed due to a temporary system or network issue.",
-    expectedOutcome: "The process completes successfully on the next attempt.",
-    recommended: true
-  },
-  alternatives: []
-};
+function describeRetryTarget(step?: string): string {
+  switch (step) {
+    case 'scanning':
+      return 'Retry the hardware scan';
+    case 'bios':
+      return 'Recheck the BIOS step';
+    case 'building':
+    case 'kext-fetch':
+      return 'Retry the EFI build';
+    case 'recovery-download':
+      return 'Retry Apple recovery download';
+    case 'usb-select':
+      return 'Refresh the removable-drive list';
+    case 'part-prep':
+      return 'Refresh the disk list';
+    default:
+      return 'Retry the current step';
+  }
+}
+
+function buildUnknownFallback(ctx: SuggestionContext): Suggestion {
+  const retryTarget = describeRetryTarget(ctx.step);
+  return {
+    code: 'unknown_error',
+    category: 'environment_error',
+    severity: 'actionable',
+    title: 'Something went wrong',
+    explanation: 'An unexpected error interrupted this step before the app could classify it cleanly.',
+    decisionSummary: `Recommended: ${retryTarget}. If it fails again, copy the report instead of repeating the same action blindly.`,
+    primaryAction: {
+      text: retryTarget,
+      confidence: 'medium',
+      confidenceReason: 'The safest first move is to retry the exact step that failed once with the current state.',
+      group: 'fix_now',
+      reason: 'Unexpected failures are often transient, but the retry should stay anchored to the step that actually failed.',
+      expectedOutcome: 'The failed step either succeeds or produces a clearer, more specific error.',
+      recommended: true,
+    },
+    alternatives: [
+      act(
+        'Copy the report and open an issue if the same error repeats',
+        'high',
+        'Repeated unknown failures need diagnostics instead of repeated blind retries.',
+        'learn_more',
+        'A sanitized report preserves the useful details without exposing secrets or local paths.',
+        'You can report the failure with enough context to debug it.',
+      ),
+    ],
+  };
+}
 
 // ─── Recommendation logic ───────────────────────────────────────────────────
 
@@ -1330,7 +1463,7 @@ export function getSuggestion(ctx: SuggestionContext): Suggestion {
     }
   }
 
-  return UNKNOWN_FALLBACK;
+  return buildUnknownFallback(ctx);
 }
 
 export interface ActionPayload {

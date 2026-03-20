@@ -38,10 +38,11 @@ function useSummaryCounts(settings: BiosSettingPlan[]) {
   return useMemo(() => {
     const required = settings.filter(s => s.required);
     const verified = settings.filter(s => s.verificationStatus === 'verified');
-    const pending = settings.filter(s => s.verificationStatus !== 'verified' && s.required);
+    const unknown = settings.filter(s => s.required && s.verificationStatus === 'unknown');
+    const failed = settings.filter(s => s.required && s.verificationStatus === 'unverified');
     const manualOnly = settings.filter(s => s.supportLevel === 'manual');
     const autoEligible = settings.filter(s => s.supportLevel !== 'manual');
-    return { total: settings.length, required: required.length, verified: verified.length, pending: pending.length, manualOnly: manualOnly.length, autoEligible: autoEligible.length };
+    return { total: settings.length, required: required.length, verified: verified.length, unknown: unknown.length, failed: failed.length, manualOnly: manualOnly.length, autoEligible: autoEligible.length };
   }, [settings]);
 }
 
@@ -193,7 +194,7 @@ export default function BiosStep({
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div className="h-full flex flex-col gap-0">
+    <div className="min-h-full flex flex-col gap-0">
 
       {/* ── Restarting overlay ─────────────────────────────────────── */}
       <AnimatePresence>
@@ -272,11 +273,15 @@ export default function BiosStep({
       <div className="flex-shrink-0 flex flex-wrap items-center gap-x-4 gap-y-1 pb-5 text-[11px] text-white/35 font-medium">
         <span className="flex items-center gap-1.5">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-          {counts.verified} verified
+          {counts.verified} checked
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-          {counts.pending} pending
+          <span className="w-1.5 h-1.5 rounded-full bg-white/35" />
+          {counts.unknown} unknown
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
+          {counts.failed} failed
         </span>
         <span className="text-white/15">|</span>
         <span>{counts.manualOnly} manual only</span>
@@ -296,12 +301,12 @@ export default function BiosStep({
             {stage === 'awaiting_return' || stage === 'resumed_from_firmware'
               ? 'Session resumed after firmware restart. The app is re-verifying settings before unlocking the build step.'
               : stage === 'partially_verified'
-              ? 'Some settings are still pending. Verify the remaining items or restart to firmware to apply them.'
+              ? 'Some required BIOS items are still unknown. Recheck the remaining items or restart to firmware to apply them.'
               : stage === 'blocked'
-              ? 'Required settings could not be verified. Review the items below and verify or fix them.'
+              ? 'Required BIOS items failed verification. Review the checklist below and fix the failed items before continuing.'
               : stage === 'unsupported_host'
               ? 'Automatic firmware restart is unavailable on this host. Use the manual path and verify the settings after returning.'
-              : 'BIOS preparation is in progress.'}
+              : 'BIOS checklist is being verified.'}
           </div>
         </motion.div>
       )}
@@ -336,11 +341,11 @@ export default function BiosStep({
       )}
 
       {/* ── 3. Main content: settings list + detail panel ──────────── */}
-      <div className="flex-1 min-h-0 flex flex-col xl:flex-row gap-4 xl:gap-0 overflow-hidden">
+      <div className="flex-1 min-h-[430px] xl:min-h-0 flex flex-col xl:flex-row gap-4 overflow-hidden">
 
         {/* ── Settings list (left) ────────────────────────────────── */}
-        <div className="flex-1 overflow-y-auto xl:pr-4 custom-scrollbar">
-          <div className="space-y-px">
+        <div className="flex-1 min-h-[320px] overflow-y-auto rounded-[26px] border border-white/6 bg-white/[0.02] p-2 custom-scrollbar">
+          <div className="space-y-1">
             {allItems.map(setting => {
               const isVerified = checked.has(setting.id) || setting.verificationStatus === 'verified';
               const isSelected = setting.id === selectedSettingId;
@@ -382,7 +387,7 @@ export default function BiosStep({
                       )}
                     </div>
                     <div className="text-[11px] text-white/25 mt-0.5 truncate">
-                      {setting.recommendedValue} · {setting.confidence} confidence
+                      {setting.recommendedValue} · {setting.verificationStatus === 'verified' ? 'checked' : setting.verificationStatus === 'unverified' ? 'failed' : 'unknown'}
                     </div>
                   </div>
 
@@ -398,7 +403,7 @@ export default function BiosStep({
         </div>
 
         {/* ── Detail panel (right) ────────────────────────────────── */}
-        <div className="w-full xl:w-[280px] xl:flex-shrink-0 border-t xl:border-t-0 xl:border-l border-white/5 pt-4 xl:pt-0 xl:pl-5 overflow-y-auto custom-scrollbar max-h-[240px] xl:max-h-none">
+        <div className="w-full xl:w-[300px] xl:flex-shrink-0 min-h-[260px] overflow-y-auto rounded-[26px] border border-white/6 bg-white/[0.02] p-4 custom-scrollbar">
           <AnimatePresence mode="wait">
             {selectedSetting ? (
               <motion.div
@@ -565,7 +570,7 @@ export default function BiosStep({
                   : 'bg-white/[0.03] text-white/25 cursor-not-allowed'
               }`}
             >
-              {busyAction === 'verify' ? 'Verifying...' : 'Continue'}
+              {busyAction === 'verify' ? 'Rechecking...' : 'Recheck BIOS and Continue'}
             </button>
           </div>
         </div>

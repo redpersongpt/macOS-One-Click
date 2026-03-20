@@ -4,6 +4,7 @@ import type { CompatibilityReport } from '../electron/compatibility.js';
 import type { ValidationResult } from '../electron/configValidator.js';
 import type { DiskInfo } from '../electron/diskOps.js';
 import {
+  buildSavedSupportLog,
   buildIssueReportDraft,
   createDiagnosticsSnapshot,
   inferIssueReportTrigger,
@@ -150,6 +151,26 @@ describe('release diagnostics', () => {
     assert.equal(trigger, 'unexpected_runtime_error');
   });
 
+  test('prefers explicit startup failure context when renderer load fails before normal flow', () => {
+    const lastFailure: ReleaseFailureContext = {
+      trigger: 'startup_failure',
+      message: 'Renderer navigation failed',
+      detail: 'did-fail-load',
+      channel: 'startup',
+      code: 'did_fail_load',
+      occurredAt: '2026-03-20T12:00:00.000Z',
+    };
+
+    const trigger = inferIssueReportTrigger({
+      lastFailure,
+      validationResult: null,
+      lastTaskKind: null,
+      lastTaskStatus: null,
+    });
+
+    assert.equal(trigger, 'startup_failure');
+  });
+
   test('issue submission helper fails closed on timeout instead of hanging', async () => {
     const startedAt = Date.now();
     const success = await openIssueReportUrl(
@@ -162,5 +183,53 @@ describe('release diagnostics', () => {
 
     assert.equal(success, false);
     assert.ok(Date.now() - startedAt < 250);
+  });
+
+  test('builds a sanitized support log bundle for desktop export', () => {
+    const snapshot = createDiagnosticsSnapshot({
+      version: '2.2.1',
+      platform: 'darwin',
+      arch: 'arm64',
+      compatMode: 'none',
+      timestamp: '2026-03-20T12:00:00.000Z',
+      sessionId: 'session-secret-value',
+      hardware: 'Intel Core i7, Radeon RX 580, macOS',
+      confidence: 'high',
+      firmware: 'SB:false, VT:true, VT-d:false',
+      lastTaskKind: 'efi-build',
+      lastTaskStatus: 'failed',
+      lastError: 'Failure at /Users/alice/EFI',
+      failedKexts: ['WhateverGreen (github: timeout token=abc123)'],
+      kextSources: { WhateverGreen: 'failed' },
+      selectedDisk: makeDisk(),
+      diskIdentity: { serialNumber: 'USB-12345', devicePath: '/dev/disk/by-id/usb-Sensitive-1234' },
+      compatibilityReport: makeCompatibilityReport(),
+      validationResult: makeValidationResult(),
+      recoveryStats: {
+        attempts: 1,
+        lastHttpCode: 403,
+        lastError: 'APPLE_AUTH_REJECT for alice@example.com',
+        decision: 'manual-import',
+        source: 'apple_primary',
+      },
+      recentLogs: [],
+      lastFailure: null,
+    });
+
+    const bundle = buildSavedSupportLog(snapshot, [
+      {
+        t: '2026-03-20T12:00:00.000Z',
+        sessionId: 'session-secret-value',
+        kind: 'ui_event',
+        detail: { event: 'error_surface_opened', path: '/Users/alice/Desktop/bad.txt' },
+      },
+    ], 'flashconf.secret-token at /Users/alice/Desktop/bad.txt from /Users/redperson/macOS-One-Click and file:///Applications/alice/macOS-OneClick/dist/index.html');
+
+    assert.match(bundle, /Support Log/);
+    assert.equal(bundle.includes('/Users/alice'), false);
+    assert.equal(bundle.includes('/Users/redperson/macOS-One-Click'), false);
+    assert.equal(bundle.includes('/Applications/alice'), false);
+    assert.equal(bundle.includes('flashconf.secret-token'), false);
+    assert.equal(bundle.includes('alice@example.com'), false);
   });
 });

@@ -15,6 +15,7 @@ interface Props {
   planningMode: CompatibilityPlanningMode;
   onPlanningModeChange: (mode: CompatibilityPlanningMode) => void;
   onSelect: (version: string) => void;
+  onUseRecommendedVersion?: () => void;
 }
 
 export default function VersionStep({
@@ -24,13 +25,17 @@ export default function VersionStep({
   planningMode,
   onPlanningModeChange,
   onSelect,
+  onUseRecommendedVersion,
 }: Props) {
+  const selectedRow = matrix.rows.find((row) => row.versionName === selectedVersion) ?? null;
+  const recommendedRow = matrix.rows.find((row) => row.versionName === matrix.recommendedVersion) ?? null;
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-8">
       <div>
         <h2 className="text-4xl font-bold text-white mb-2">Choose macOS</h2>
         <p className="text-[#888888] font-medium text-sm">
-          Every target is shown here. Supported, Experimental, and Risky paths remain selectable for planning, while truly blocked versions stay unselectable.
+          Pick the calmest viable macOS target first. Recommended paths stand out immediately, while blocked versions stay readable but unavailable.
         </p>
       </div>
 
@@ -42,8 +47,8 @@ export default function VersionStep({
           : 'border-amber-500/20 bg-amber-500/8 text-amber-100/75'
       }`}>
         {planningMode === 'safe'
-          ? 'Safe Mode keeps the recommendation anchored to the highest-confidence supported or experimental target first. Risky rows are still visible, but they are presented as advanced planning paths rather than the default starting point.'
-          : 'Exploratory Mode keeps the same hard blockers, but it highlights riskier non-blocked targets as stretch candidates and shows more aggressive tuning ideas in the report.'}
+          ? 'Safe Mode keeps the first recommendation anchored to the calmest supported or experimental path.'
+          : 'Exploratory Mode keeps the same hard blockers, but it gives risky paths more room in the shortlist.'}
       </div>
 
       {report.warnings.length > 0 && (
@@ -60,6 +65,28 @@ export default function VersionStep({
       {!report.isCompatible && (
         <div className="p-5 rounded-2xl bg-red-500/8 border border-red-500/20 text-sm text-red-300/80">
           {report.errors.map((e, i) => <p key={i}>{e}</p>)}
+        </div>
+      )}
+
+      {selectedRow?.status === 'blocked' && recommendedRow && (
+        <div className="rounded-2xl border border-amber-500/20 bg-amber-500/8 p-5 space-y-3">
+          <div className="text-[11px] font-black uppercase tracking-[0.2em] text-amber-300/75">
+            Selected Version Blocked
+          </div>
+          <p className="text-sm leading-relaxed text-white/80">
+            {selectedRow.reason}
+          </p>
+          <p className="text-sm leading-relaxed text-white/60">
+            Best usable alternative: <span className="font-bold text-white">{recommendedRow.versionName}</span>
+          </p>
+          {onUseRecommendedVersion && (
+            <button
+              onClick={onUseRecommendedVersion}
+              className="rounded-2xl bg-amber-500 px-4 py-2.5 text-sm font-bold text-black transition-all hover:bg-amber-400"
+            >
+              Use Recommended Version
+            </button>
+          )}
         </div>
       )}
 

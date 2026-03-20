@@ -167,4 +167,23 @@ describe('logger', () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  test('sanitizes file URLs and non-home absolute paths in log output', () => {
+    const dir = makeTempDir('file-url-sanitize');
+    try {
+      const logger = createLogger(makeConfig(dir, { crashSafeSync: true }));
+      logger.error('startup', 'Renderer navigation failed', {
+        validatedURL: 'file:///Applications/alice/macOS-OneClick/dist/index.html',
+        preloadPath: '/Applications/macOS-OneClick.app/Contents/Resources/app.asar/dist-electron/preload.js',
+      });
+
+      const content = fs.readFileSync(path.join(dir, 'app.log'), 'utf-8');
+      assert.equal(content.includes('/Applications/alice'), false);
+      assert.equal(content.includes('/Applications/macOS-OneClick.app'), false);
+      assert.equal(content.includes('[path:index.html]'), true);
+      assert.equal(content.includes('[path:preload.js]'), true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

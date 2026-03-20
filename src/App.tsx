@@ -32,6 +32,7 @@ import ReportStep    from './components/steps/ReportStep';
 import MethodStep    from './components/steps/MethodStep';
 import PrecheckStep  from './components/steps/PrecheckStep';
 import WelcomeStep   from './components/steps/WelcomeStep';
+import FailureRecoveryPanel from './components/FailureRecoveryPanel';
 import CopyDiagnosticsButton from './components/CopyDiagnosticsButton';
 import DebugOverlay from './components/DebugOverlay';
 import ValidationSummary from './components/ValidationSummary';
@@ -43,6 +44,8 @@ import { getRelevantIssues, type CommunityIssue } from './data/communityKnowledg
 import { useTaskManager } from './hooks/useTaskManager';
 import { BEGINNER_SAFETY_MODE } from './config';
 import { getSuggestionPayload, type Suggestion } from './lib/suggestionEngine';
+import { buildFailureRecoveryViewModel, parseFailureRecoveryPayload } from './lib/failureRecovery.js';
+import { resolveBackToSafetyStep, resolveRecoveryRetryAction } from './lib/recoveryRouting.js';
 import {
   isCompatibilityBlocked,
   recoveryResumeDecision,
@@ -143,6 +146,9 @@ declare global {
       getResourcePlan: (profile: import('../electron/configGenerator').HardwareProfile, efiPath?: string | null) => Promise<ResourcePlan>;
       // Diagnostics snapshot
       getDiagnostics: () => Promise<PublicDiagnosticsSnapshot>;
+      saveSupportLog: (extraContext?: string | null) => Promise<{ fileName: string; savedTo: 'Desktop' }>;
+      logUiEvent: (eventName: string, detail?: Record<string, unknown> | null) => Promise<boolean>;
+      notifyRendererReady: () => Promise<boolean>;
     };
   }
 }
@@ -224,6 +230,7 @@ export default function App() {
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
   const [showRecoveryPrompt, setShowRecoveryPrompt] = useState(false);
   const [globalError, setGlobalError] = useState<string | null>(null);
+  const [globalNotice, setGlobalNotice] = useState<string | null>(null);
   const lastRecovSaveRef = useRef(0);
   const isDeployingRef = useRef(false);
   const isScanningRef = useRef(false);
@@ -372,6 +379,9 @@ export default function App() {
   const isRetryingRecovRef = useRef(false);
   const isFlashingRef = useRef(false);
   const lastRuntimeErrorRef = useRef<string | null>(null);
+  const logUiEvent = (eventName: string, detail?: Record<string, unknown> | null) => {
+    window.electron?.logUiEvent?.(eventName, detail ?? null).catch(() => {});
+  };
   const handleImportRecovery = async () => {
     if (!efiPath || !profile?.targetOS || isImportingRef.current) return;
     isImportingRef.current = true;
@@ -402,6 +412,7 @@ export default function App() {
       kextSources?: Record<string, 'github' | 'embedded' | 'failed'>;
     },
   ) => {
+    setGlobalNotice(null);
     const trace = options?.validationResult?.firstFailureTrace ?? validationResult?.firstFailureTrace ?? null;
     // Pre-compute a rough code for retry counting (before full payload build)
     const msgLower = errorMessage.toLowerCase();
@@ -426,7 +437,18 @@ export default function App() {
     if (payload.code) {
       setLastSuggestion({ code: payload.code, category: payload.category ?? 'unknown', title: payload.message });
     }
-    setGlobalError(JSON.stringify(payload));
+    const serialized = JSON.stringify({
+      ...payload,
+      targetStep: overrideStep ?? step,
+      rawMessage: errorMessage,
+    });
+    setGlobalError(serialized);
+    logUiEvent('error_surface_opened', {
+      step: overrideStep ?? step,
+      code: payload.code ?? roughCode,
+      message: payload.message,
+      rawMessage: errorMessage,
+    });
   };
 
   useEffect(() => {
@@ -442,6 +464,11 @@ export default function App() {
     window.addEventListener('moc:runtime-error', onRuntimeError as EventListener);
     return () => window.removeEventListener('moc:runtime-error', onRuntimeError as EventListener);
   }, [setErrorWithSuggestion, step]);
+
+  useEffect(() => {
+    if (step === 'landing') return;
+    logUiEvent('step_changed', { step });
+  }, [step]);
 
   const invalidateGeneratedBuild = () => {
     setEfiPath(null);
@@ -597,9 +624,11 @@ export default function App() {
     });
     if (!result.ok) {
       debugWarn(`[guard] Blocked transition to "${target}": ${result.reason}`);
+      logUiEvent('step_transition_blocked', { target, redirect: result.redirect ?? null, reason: result.reason ?? 'blocked' });
       if (result.redirect) _setStepRaw(result.redirect);
       return;
     }
+    logUiEvent('step_transition_allowed', { target });
     _setStepRaw(target);
   };
 
@@ -839,6 +868,21 @@ export default function App() {
     // instead of crashing with "Cannot read properties of undefined".
     if (!window.electron || typeof window.electron.getPersistedState !== 'function') {
       setErrorWithSuggestion('Application failed to initialise — the preload script did not load. Restart the app. If the problem persists, check app.log in the data directory.');
+      return;
+    }
+
+    await window.electron.notifyRendererReady().catch(() => false);
+
+    if (window.location.search.includes('safe-recovery=1')) {
+      await window.electron.clearState().catch(() => {});
+      window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
+      setProfile(null);
+      setCompat(null);
+      setBiosConf(null);
+      setPlanningProfileContext(null);
+      setProfileArtifact(null);
+      invalidateGeneratedBuild();
+      _setStepRaw('welcome');
       return;
     }
 
@@ -1597,6 +1641,79 @@ export default function App() {
     setStep('report');
   };
 
+  const recoveryPayload = useMemo(() => parseFailureRecoveryPayload(globalError), [globalError]);
+  const recoveryView = useMemo(() => buildFailureRecoveryViewModel(globalError), [globalError]);
+
+  const handleRecoveryRetry = async () => {
+    const target = recoveryPayload?.targetStep ?? step;
+    logUiEvent('recovery_retry_clicked', { targetStep: target });
+    setGlobalError(null);
+    switch (resolveRecoveryRetryAction({
+      targetStep: target,
+      hasProfile: Boolean(profile),
+      hasMethod: Boolean(method),
+      buildReady,
+    }).kind) {
+      case 'scan':
+        await startScan();
+        return;
+      case 'refresh_bios':
+        if (profile) await refreshBiosState(profile, { redirectIfBlocked: false });
+        return;
+      case 'restart_build':
+        if (profile) await startDeploy();
+        return;
+      case 'refresh_usb':
+        await refreshUsbTargets();
+        return;
+      case 'refresh_partition':
+        await refreshPartitionTargets();
+        return;
+      case 'reselect_method':
+        if (method) await selectMethod(method);
+        return;
+      default:
+        return;
+    }
+  };
+
+  const handleBackToSafety = () => {
+    const target = recoveryPayload?.targetStep;
+    logUiEvent('recovery_back_to_safety_clicked', { targetStep: target ?? step });
+    setGlobalError(null);
+    const destination = resolveBackToSafetyStep({ hasProfile: Boolean(profile) });
+    setStep(destination);
+  };
+
+  const handleOpenIssueReport = async () => {
+    try {
+      logUiEvent('issue_report_open_requested', { targetStep: recoveryPayload?.targetStep ?? step });
+      const res = await window.electron.reportIssue();
+      try {
+        await navigator.clipboard.writeText(res.body);
+      } catch {
+        // Clipboard failure should not block the issue flow.
+      }
+      if (res.success) {
+        setGlobalNotice('Issue report opened in your browser. The sanitized report was copied to the clipboard.');
+      } else {
+        setGlobalNotice(`Browser launch failed. The sanitized report was copied; paste it manually at ${res.baseUrl}.`);
+      }
+    } catch {
+      setErrorWithSuggestion('Could not generate the issue report. Copy the report and file manually on GitHub.', recoveryPayload?.targetStep ?? step);
+    }
+  };
+
+  const handleSaveSupportLog = async () => {
+    try {
+      logUiEvent('support_log_save_requested', { targetStep: recoveryPayload?.targetStep ?? step });
+      const result = await window.electron.saveSupportLog(typeof globalError === 'string' ? globalError : null);
+      setGlobalNotice(`Sanitized log saved to your ${result.savedTo} as ${result.fileName}.`);
+    } catch (error: any) {
+      setErrorWithSuggestion(error?.message || 'Could not save the support log to the Desktop.', recoveryPayload?.targetStep ?? step);
+    }
+  };
+
   // ── Sidebar helper ──────────────────────────────────────────
 
   const SidebarItem = ({ id, label, icon: Icon }: { id: string; label: string; icon: any }) => {
@@ -1847,11 +1964,38 @@ export default function App() {
             </div>
 
             {/* Content */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-10 relative">
-              <div className="absolute top-6 right-8 opacity-10 pointer-events-none flex items-center gap-2">
-                <BrandIcon className="w-4 h-4 text-white" />
-                <span className="text-[10px] font-bold uppercase tracking-widest">macOS Frontier</span>
+            <div className="flex-1 min-h-0 flex flex-col relative">
+              <div className="relative flex-shrink-0 px-10 pt-8 pb-4">
+                <div className="absolute top-4 right-8 opacity-10 pointer-events-none flex items-center gap-2">
+                  <BrandIcon className="w-4 h-4 text-white" />
+                  <span className="text-[10px] font-bold uppercase tracking-widest">macOS Frontier</span>
+                </div>
+                {(() => {
+                  const backMap: Partial<Record<StepId, StepId>> = {
+                    'welcome': 'landing',
+                    'prereq': 'welcome',
+                    'precheck': 'prereq',
+                    'version-select': 'precheck',
+                    'report': 'version-select',
+                    'bios': 'report',
+                    'recovery-download': 'bios',
+                    'method-select': 'recovery-download',
+                    'usb-select': 'method-select',
+                    'part-prep': 'method-select',
+                  };
+                  const target = backMap[step];
+                  if (!target) return null;
+                  return (
+                    <button
+                      onClick={() => setStep(target)}
+                      className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-white/68 shadow-[0_16px_40px_rgba(0,0,0,0.18)] backdrop-blur-xl transition-colors hover:bg-white/[0.07] hover:text-white"
+                    >
+                      <ChevronLeft className="w-4 h-4" /> Back
+                    </button>
+                  );
+                })()}
               </div>
+              <div className="flex-1 overflow-y-auto custom-scrollbar px-10 pb-10 relative">
               <AnimatePresence mode="wait">
 
                 {/* WELCOME */}
@@ -1886,16 +2030,33 @@ export default function App() {
                 {/* VERSION SELECT */}
                 {step === 'version-select' && compat && (
                   <motion.div key="ver" initial={stepEnter} animate={stepActive} exit={stepExit} transition={STEP_TRANSITION}>
-                    <VersionStep report={compat} matrix={compatibilityMatrix ?? buildCompatibilityMatrix(profile!, { planningMode })} selectedVersion={profile?.targetOS ?? compat.recommendedVersion} planningMode={planningMode} onPlanningModeChange={setPlanningMode} onSelect={v => {
-                      if (!profile) return;
-                      const selection = targetSelectionDecision(profile, v, planningMode);
-                      setProfile(selection.profile);
-                      setCompat(selection.compatibility);
-                      setBiosConf(selection.biosConfig);
-                      invalidateGeneratedBuild();
-                      refreshBiosState(selection.profile).catch(() => {});
-                      setStep(selection.nextStep);
-                    }} />
+                    <VersionStep
+                      report={compat}
+                      matrix={compatibilityMatrix ?? buildCompatibilityMatrix(profile!, { planningMode })}
+                      selectedVersion={profile?.targetOS ?? compat.recommendedVersion}
+                      planningMode={planningMode}
+                      onPlanningModeChange={setPlanningMode}
+                      onUseRecommendedVersion={() => {
+                        if (!profile || !compat.recommendedVersion) return;
+                        const selection = targetSelectionDecision(profile, compat.recommendedVersion, planningMode);
+                        setProfile(selection.profile);
+                        setCompat(selection.compatibility);
+                        setBiosConf(selection.biosConfig);
+                        invalidateGeneratedBuild();
+                        refreshBiosState(selection.profile).catch(() => {});
+                        setStep(selection.nextStep);
+                      }}
+                      onSelect={v => {
+                        if (!profile) return;
+                        const selection = targetSelectionDecision(profile, v, planningMode);
+                        setProfile(selection.profile);
+                        setCompat(selection.compatibility);
+                        setBiosConf(selection.biosConfig);
+                        invalidateGeneratedBuild();
+                        refreshBiosState(selection.profile).catch(() => {});
+                        setStep(selection.nextStep);
+                      }}
+                    />
                   </motion.div>
                 )}
 
@@ -2257,38 +2418,15 @@ export default function App() {
                           </AnimatePresence>
                         </motion.div>
                       ))}
-                      </AnimatePresence>
-                    </div>
+              </AnimatePresence>
+              </div>
                   </motion.div>
                 )}
 
-              </AnimatePresence>
+	              </AnimatePresence>
 
-              {/* Back navigation — available on all non-auto, non-destructive steps */}
-              {(() => {
-                const backMap: Partial<Record<StepId, StepId>> = {
-                  'welcome': 'landing',
-                  'prereq': 'welcome',
-                  'precheck': 'prereq',
-                  'version-select': 'precheck',
-                  'report': 'version-select',
-                  'bios': 'report',
-                  'recovery-download': 'bios',
-                  'method-select': 'recovery-download',
-                  'usb-select': 'method-select',
-                  'part-prep': 'method-select',
-                };
-                const target = backMap[step];
-                if (!target) return null;
-                return (
-                  <div className="absolute bottom-10 left-10">
-                    <button onClick={() => setStep(target)} className="flex items-center gap-1.5 text-sm text-[#555] hover:text-white transition-colors cursor-pointer">
-                      <ChevronLeft className="w-4 h-4" /> Back
-                    </button>
-                  </div>
-                );
-              })()}
-            </div>
+	            </div>
+	          </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -2730,212 +2868,79 @@ export default function App() {
         })()}
       </AnimatePresence>
 
-      {/* ── GLOBAL ERROR TOAST ───────────────────────────────────── */}
       <AnimatePresence>
-        {globalError && (() => {
-          let err: any = null;
-          try {
-            err = typeof globalError === 'string' && globalError.startsWith('{') ? JSON.parse(globalError) : { message: globalError };
-          } catch {
-            err = { message: globalError };
-          }
-
-          const isHardware = err.category === 'hardware_error';
-          const isEnv = err.category === 'environment_error';
-          const isCritical = err.severity === 'critical';
-          const alts: Array<{ text: string; confidence: string; group: string; recommended?: boolean; reason?: string; expectedOutcome?: string; risk?: string }> = err.alternatives ?? [];
-          const recommendedAlt = alts.find((a: any) => a.recommended);
-          const fixNow = alts.filter((a: any) => a.group === 'fix_now' && !a.recommended);
-          const tryAlt = alts.filter((a: any) => a.group === 'try_alternative' && !a.recommended);
-          const learnMore = alts.filter((a: any) => a.group === 'learn_more' && !a.recommended);
-
-          return (
-            <motion.div
-              key="global-error"
-              initial={{ opacity: 0, y: 40, scale: 0.95 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 40, scale: 0.95 }}
-              className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-3 p-1 bg-[#0d0d0f]/90 border ${isCritical ? 'border-rose-500/40' : 'border-rose-500/30'} rounded-3xl shadow-2xl backdrop-blur-xl max-w-lg w-[90vw]`}
-            >
-              <div className="flex items-start gap-4 px-5 py-4">
-                <div className={`w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0 ${
-                  isHardware ? 'bg-amber-500/10 text-amber-400' : isEnv ? 'bg-blue-500/10 text-blue-400' : 'bg-rose-500/10 text-rose-400'
-                }`}>
-                  <AlertTriangle className="w-5 h-5" />
-                </div>
-                <div className="flex-1 space-y-1.5">
-                  <h3 className="text-sm font-bold text-white leading-tight">{err?.message ?? 'An error occurred'}</h3>
-                  {err?.explanation && <p className="text-[11px] text-white/50 leading-relaxed">{err.explanation}</p>}
-                  
-                  {/* Recovery Hardening Fallback UI */}
-                  {err.message && (typeof err.message === 'string') && (err.message.includes('Apple server rejected') || err.message.includes('RECOVERY_AUTH') || err.message.includes('401') || err.message.includes('403')) && (
-                    <div className="mt-4 flex flex-col gap-2 pt-3 border-t border-white/5">
-                      <p className="text-[10px] text-white/30 italic leading-snug">Apple servers rejected the request multiple times. This is not caused by your system.</p>
-                      <div className="flex flex-wrap gap-2 pt-1">
-                        <button
-                          onClick={() => { setStep('method-select'); setGlobalError(null); }}
-                          className="px-3 py-1.5 bg-blue-600/20 border border-blue-500/30 rounded-lg text-[10px] font-bold text-blue-300 hover:bg-blue-600/30 transition-all cursor-pointer"
-                        >
-                          Continue with EFI only (skip recovery)
-                        </button>
-                        <button
-                          onClick={() => { setStep('version-select'); setGlobalError(null); }}
-                          className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-[10px] font-bold text-white/60 hover:bg-white/10 transition-all cursor-pointer"
-                        >
-                          Try a different macOS version
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {err?.decisionSummary && (
-                    <p className="mt-1.5 text-[11px] font-semibold text-emerald-300/80 leading-relaxed">{err.decisionSummary}</p>
-                  )}
-                  {(err?.validationComponent || err?.validationPath) && (
-                    <div className="mt-2 p-2.5 rounded-xl bg-white/4 border border-white/8 space-y-1">
-                      {err?.validationCode && (
-                        <p className="text-[9px] font-mono text-white/40">Code: {err.validationCode}</p>
-                      )}
-                      {err?.validationComponent && (
-                        <p className="text-[10px] text-white/65">Component: {err.validationComponent}</p>
-                      )}
-                      {err?.validationPath && (
-                        <p className="text-[10px] text-white/65">Path: {err.validationPath}</p>
-                      )}
-                      {err?.validationSource && (
-                        <p className="text-[10px] text-white/45">Source: {err.validationSource}</p>
-                      )}
-                      {err?.validationDetail && (
-                        <p className="text-[10px] text-white/45">{err.validationDetail}</p>
-                      )}
-                    </div>
-                  )}
-                  {err?.suggestion && err?.suggestionRecommended && (
-                    <div className="mt-2 p-2.5 rounded-xl bg-emerald-500/8 border border-emerald-500/15 space-y-1">
-                      <div className="flex items-start gap-1.5 text-[10px] font-bold text-emerald-400">
-                        <CheckCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                        <span className="leading-relaxed">{err.suggestion}</span>
-                      </div>
-                      {err?.suggestionReason && (
-                        <p className="text-[9px] text-white/30 leading-relaxed ml-[20px]">{err.suggestionReason}</p>
-                      )}
-                      {err?.suggestionOutcome && (
-                        <p className="text-[9px] text-emerald-400/40 leading-relaxed ml-[20px]">Expected: {err.suggestionOutcome}</p>
-                      )}
-                      {err?.suggestionRisk && (
-                        <p className="text-[9px] text-amber-400/50 leading-relaxed ml-[20px]">⚠ {err.suggestionRisk}</p>
-                      )}
-                    </div>
-                  )}
-                  {err?.suggestion && !err?.suggestionRecommended && (
-                    <div className="mt-2 space-y-1">
-                      <div className="flex items-start gap-1.5 text-[10px] font-medium text-white/50">
-                        <span className="text-white/20 mt-0.5 shrink-0">•</span>
-                        <span className="leading-relaxed">{err.suggestion}</span>
-                      </div>
-                      {err?.suggestionReason && (
-                        <p className="text-[9px] text-white/25 leading-relaxed ml-[14px]">{err.suggestionReason}</p>
-                      )}
-                    </div>
-                  )}
-                  {recommendedAlt && (
-                    <div className="mt-2 p-2.5 rounded-xl bg-emerald-500/8 border border-emerald-500/15 space-y-1">
-                      <div className="flex items-start gap-1.5 text-[10px] font-bold text-emerald-400">
-                        <CheckCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                        <span className="leading-relaxed">{recommendedAlt.text}</span>
-                      </div>
-                      {recommendedAlt.reason && (
-                        <p className="text-[9px] text-white/30 leading-relaxed ml-[20px]">{recommendedAlt.reason}</p>
-                      )}
-                      {recommendedAlt.expectedOutcome && (
-                        <p className="text-[9px] text-emerald-400/40 leading-relaxed ml-[20px]">Expected: {recommendedAlt.expectedOutcome}</p>
-                      )}
-                      {recommendedAlt.risk && (
-                        <p className="text-[9px] text-amber-400/50 leading-relaxed ml-[20px]">⚠ {recommendedAlt.risk}</p>
-                      )}
-                    </div>
-                  )}
-                  {fixNow.length > 0 && (
-                    <div className="mt-1.5 space-y-1.5">
-                      {fixNow.map((a: any, i: number) => (
-                        <div key={i} className="space-y-0.5">
-                          <div className="flex items-start gap-1.5 text-[10px] text-white/40">
-                            <span className="text-white/20 mt-0.5 shrink-0">•</span>
-                            <span className="leading-relaxed">{a?.text}</span>
-                          </div>
-                          {a?.reason && <p className="text-[9px] text-white/20 leading-relaxed ml-[14px]">{a.reason}</p>}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {tryAlt.length > 0 && (
-                    <div className="mt-1.5 space-y-1.5">
-                      <span className="text-[9px] font-bold uppercase tracking-widest text-white/20">Alternatives</span>
-                      {tryAlt.map((a: any, i: number) => (
-                        <div key={i} className="space-y-0.5">
-                          <div className="flex items-start gap-1.5 text-[10px] text-blue-400/70">
-                            <span className="text-blue-400/30 mt-0.5 shrink-0">→</span>
-                            <span className="leading-relaxed">{a?.text}</span>
-                          </div>
-                          {a?.reason && <p className="text-[9px] text-blue-400/30 leading-relaxed ml-[14px]">{a.reason}</p>}
-                          {a?.expectedOutcome && <p className="text-[9px] text-white/20 leading-relaxed ml-[14px]">→ {a.expectedOutcome}</p>}
-                          {a?.risk && <p className="text-[9px] text-amber-400/40 leading-relaxed ml-[14px]">⚠ {a.risk}</p>}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {learnMore.length > 0 && (
-                    <div className="mt-1 space-y-0.5">
-                      {learnMore.map((a: any, i: number) => (
-                        <p key={i} className="text-[9px] text-white/25 leading-relaxed">{a?.text}</p>
-                      ))}
-                    </div>
-                  )}
-                  {err?.contextNote && (
-                    <p className="mt-1.5 text-[10px] text-amber-400/60 leading-relaxed">{err.contextNote}</p>
-                  )}
-                </div>
-                <button onClick={() => setGlobalError(null)} className="text-white/20 hover:text-white/50 transition-colors cursor-pointer p-1">
-                  <X className="w-4 h-4" />
-                </button>
+        {globalNotice && (
+          <motion.div
+            key="global-notice"
+            initial={{ opacity: 0, y: 20, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.98 }}
+            className="fixed bottom-6 left-1/2 z-40 w-[92vw] max-w-xl -translate-x-1/2 rounded-3xl border border-emerald-500/18 bg-[#0b0b0d]/94 px-5 py-4 shadow-2xl backdrop-blur-xl"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1">
+                <div className="text-[11px] font-black uppercase tracking-[0.22em] text-emerald-300/70">Notice</div>
+                <p className="text-sm leading-relaxed text-white/80">{globalNotice}</p>
               </div>
+              <button onClick={() => setGlobalNotice(null)} className="rounded-xl p-2 text-white/25 transition-colors hover:bg-white/6 hover:text-white/70">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-              <div className="flex items-center justify-between gap-3 px-5 pb-4">
-                <div className="flex-1">
-                  <CopyDiagnosticsButton 
-                    extraContext={typeof globalError === 'string' ? globalError : JSON.stringify(globalError)} 
-                    className="w-full justify-center py-2.5 bg-white/5 border-white/10 text-[10px]" 
+      <AnimatePresence>
+        {globalError && recoveryView && (
+          <motion.div key="global-error-recovery" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <FailureRecoveryPanel
+              title={recoveryView.title}
+              whatFailed={recoveryView.whatFailed}
+              likelyCause={recoveryView.likelyCause}
+              nextActions={recoveryView.nextActions}
+              technicalDetails={recoveryView.technicalDetails}
+              onDismiss={() => setGlobalError(null)}
+              actions={[
+                {
+                  label: 'Retry',
+                  onClick: handleRecoveryRetry,
+                  tone: 'primary',
+                },
+                {
+                  label: 'Back to Safety',
+                  onClick: handleBackToSafety,
+                  tone: 'subtle',
+                },
+              ]}
+              extra={(
+                <div className="grid gap-3 md:grid-cols-3">
+                  <CopyDiagnosticsButton
+                    extraContext={typeof globalError === 'string' ? globalError : JSON.stringify(globalError)}
+                    className="w-full justify-center rounded-2xl border border-white/10 bg-white/5 py-3 text-sm"
                   />
+                  <button
+                    onClick={() => void handleSaveSupportLog()}
+                    className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm font-bold text-emerald-100 transition-all hover:bg-emerald-500/20"
+                  >
+                    Save Log
+                  </button>
+                  <button
+                    onClick={() => void handleOpenIssueReport()}
+                    className="rounded-2xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm font-bold text-rose-200 transition-all hover:bg-rose-500/20"
+                  >
+                    Open Issue
+                  </button>
                 </div>
-                <button
-                  onClick={async () => {
-                    try {
-                      const res = await window.electron.reportIssue();
-                      // Always copy body to clipboard — the URL only contains the title
-                      try { await navigator.clipboard.writeText(res.body); } catch {}
-                      if (res.success) {
-                        setGlobalError('Issue report opened in your browser. The diagnostic details have been copied to your clipboard — paste them into the issue body.');
-                      } else {
-                        setGlobalError(`Could not open the browser automatically. The issue text has been copied — paste it manually at: ${res.baseUrl}`);
-                      }
-                    } catch {
-                      setGlobalError('Could not generate the issue report. Please file manually at: https://github.com/redpersongpt/macOS-One-Click/issues/new');
-                    }
-                  }}
-                  className="flex-1 py-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-[10px] font-bold hover:bg-rose-500/20 transition-all cursor-pointer whitespace-nowrap text-center"
-                >
-                  Send Report
-                </button>
-              </div>
-            </motion.div>
-          );
-        })()}
+              )}
+            />
+          </motion.div>
+        )}
       </AnimatePresence>
       {/* ── DEBUG OVERLAY ─────────────────────────────────────────── */}
       <AnimatePresence>
         {debugOpen && (
           <DebugOverlay
-            appVersion="2.3.0"
+            appVersion="2.3.1"
             platform={platform}
             sessionId={debugSessionId}
             currentStep={step}

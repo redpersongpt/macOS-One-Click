@@ -8,7 +8,8 @@ export type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' | 'FATAL';
 export type TimelineEventKind =
   | 'task_start' | 'task_progress' | 'task_complete' | 'task_failed' | 'task_cancelled'
   | 'phase_change' | 'safety_check' | 'app_start' | 'app_quit' | 'crash_recovery'
-  | 'recovery_attempt' | 'recovery_failure' | 'efi_validation_fail' | 'flash_start' | 'flash_fail' | 'watchdog_trigger';
+  | 'recovery_attempt' | 'recovery_failure' | 'efi_validation_fail' | 'flash_start' | 'flash_fail' | 'watchdog_trigger'
+  | 'ui_event' | 'diagnostics_export';
 
 export interface LogEntry {
   t: string; level: LogLevel; ctx: string; msg: string;

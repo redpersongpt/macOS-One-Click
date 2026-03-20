@@ -158,7 +158,7 @@ describe('compatibility matrix', () => {
     assert.match(html, /Older but still community-proven laptop path\./);
     assert.match(html, /Boot path exists, but manual fixes are likely\./);
     assert.match(html, /Selected target exceeds the supported GPU ceiling\./);
-    assert.match(html, /Safe Start/);
+    assert.match(html, /Recommended/);
     assert.match(html, /Selected/);
     assert.match(html, /Advanced Only/);
   });
@@ -181,7 +181,7 @@ describe('compatibility matrix', () => {
       }),
     );
 
-    assert.match(html, /Exploratory Start/);
+    assert.match(html, /Best Exploratory Start/);
     assert.match(html, /Exploratory Candidate/);
   });
 });

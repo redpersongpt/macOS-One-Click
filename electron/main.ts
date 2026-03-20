@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import path from 'path';
 import crypto from 'node:crypto';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { exec } from 'child_process';
 import util from 'util';
 import os from 'os';
@@ -31,7 +31,12 @@ import { verifyBiosSelections } from './bios/verification.js';
 import type { BiosOrchestratorState, BiosSessionState, BiosSettingSelection } from './bios/types.js';
 import { createLogger } from './logger.js';
 import {
+  createClassifiedIpcError,
+  type ClassifiedError,
+} from './errorMessaging.js';
+import {
   buildIssueReportDraft,
+  buildSavedSupportLog,
   createDiagnosticsSnapshot,
   openIssueReportUrl,
   type IssueReportTrigger,
@@ -66,6 +71,13 @@ import { simulateBuild, dryRunRecovery, verifyBuildState, verifyEfiBuildSuccess,
 import { runSafeSimulation, type SafeSimulationResult } from './safeSimulation.js';
 import { sim } from './simulation.js';
 import { getCompatModeConfigPath, getPackagedRendererEntryPath, getPreloadScriptPath } from './runtimePaths.js';
+import {
+  buildStartupFailurePageUrl,
+  describeStartupFailure,
+  RENDERER_READY_TIMEOUT_MS,
+  shouldIgnoreDidFailLoad,
+  type StartupFailureEventInput,
+} from './startupRecovery.js';
 import {
   deriveBiosFlowState,
   deriveReleaseFlowState,
@@ -465,15 +477,6 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
     p,
     new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`Timed out after ${ms / 1000}s: ${label}`)), ms))
   ]);
-}
-
-export type ErrorCategory = 'app_error' | 'environment_error' | 'hardware_error';
-
-interface ClassifiedError {
-  category: ErrorCategory;
-  message: string;
-  explanation: string;
-  suggestion: string;
 }
 
 // Classify OS error codes into structured user-friendly messages
@@ -1197,9 +1200,9 @@ function formatHardwareSummary(hardware: any): string {
 }
 
 function buildCurrentDiagnosticsSnapshot() {
-  const tasks = registry.list();
+  const tasks = typeof registry?.list === 'function' ? registry.list() : [];
   const lastTask = tasks.length > 0 ? tasks[tasks.length - 1] : null;
-  const appTail = logger.readTail(200);
+  const appTail = logger?.readTail(200) ?? [];
   const relevantLogs = appTail.filter((entry) => entry.level === 'ERROR' || entry.level === 'FATAL' || entry.level === 'WARN');
   const lastErr = relevantLogs.length > 0 ? relevantLogs[relevantLogs.length - 1] : null;
   const compatibilityReport = getCurrentCompatibilityReport();
@@ -1210,7 +1213,7 @@ function buildCurrentDiagnosticsSnapshot() {
     fwSummary = cachedFirmware;
   }
 
-  const scanErrorFound = logger.readTail(100).some((entry) => entry.ctx === 'scan' && entry.level === 'ERROR');
+  const scanErrorFound = (logger?.readTail(100) ?? []).some((entry) => entry.ctx === 'scan' && entry.level === 'ERROR');
   const hwStatus = lastHardwareProfile
     ? formatHardwareSummary(lastHardwareProfile)
     : scanErrorFound
@@ -1247,11 +1250,25 @@ function buildCurrentDiagnosticsSnapshot() {
       lastHttpCode: recoveryStats.lastHttpCode ?? null,
       lastError: recoveryStats.lastError,
       decision: recoveryStats.finalDecision,
-      source: (registry.list().find((task) => task.kind === 'recovery-download')?.progress as any)?.sourceId ?? 'none',
+      source: (tasks.find((task) => task.kind === 'recovery-download')?.progress as any)?.sourceId ?? 'none',
     },
     recentLogs: relevantLogs,
     lastFailure: lastFailureContext,
   });
+}
+
+function saveSupportLogToDesktop(extraContext?: string | null): { fileName: string; savedTo: 'Desktop' } {
+  const snapshot = buildCurrentDiagnosticsSnapshot();
+  const logBody = buildSavedSupportLog(snapshot, logger?.readOpsTail(200) ?? [], extraContext ?? null);
+  const timestamp = new Date().toISOString().replace(/[:]/g, '-');
+  const fileName = `macos-one-click-support-log-${timestamp}.txt`;
+  const destination = path.join(app.getPath('desktop'), fileName);
+
+  fs.writeFileSync(destination, logBody, 'utf-8');
+  logger?.timeline('diagnostics_export', undefined, { target: 'desktop', fileName, trigger: snapshot.trigger });
+  log('INFO', 'diagnostics', 'Saved support log bundle', { fileName, destination });
+
+  return { fileName, savedTo: 'Desktop' };
 }
 
 async function runEfiValidation(efiPath: string, profile: HardwareProfile | null): Promise<ValidationResult> {
@@ -1905,65 +1922,138 @@ async function runPreflight(): Promise<PreflightResult> {
 // --- Main Window ---
 
 let mainWindow: BrowserWindow | null = null;
+const startupLifecycle = {
+  preloadReady: false,
+  rendererReady: false,
+  recoveryShown: false,
+  readyTimer: null as NodeJS.Timeout | null,
+  appEntryUrl: null as string | null,
+  safeEntryUrl: null as string | null,
+  packagedDistRoot: null as string | null,
+};
 
-function buildStartupFailurePageUrl(title: string, message: string): string {
-  const escapeHtml = (value: string) => value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
+function clearStartupReadyTimer(): void {
+  if (startupLifecycle.readyTimer) {
+    clearTimeout(startupLifecycle.readyTimer);
+    startupLifecycle.readyTimer = null;
+  }
+}
 
-  const html = `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>${escapeHtml(title)}</title>
-    <style>
-      :root {
-        color-scheme: dark;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-      body {
-        margin: 0;
-        min-height: 100vh;
-        display: grid;
-        place-items: center;
-        background: #050505;
-        color: #f5f5f5;
-      }
-      main {
-        max-width: 680px;
-        padding: 32px;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        border-radius: 20px;
-        background: rgba(255, 255, 255, 0.04);
-        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
-      }
-      h1 {
-        margin: 0 0 12px;
-        font-size: 28px;
-      }
-      p {
-        margin: 0;
-        line-height: 1.6;
-        color: rgba(245, 245, 245, 0.84);
-      }
-    </style>
-  </head>
-  <body>
-    <main>
-      <h1>${escapeHtml(title)}</h1>
-      <p>${escapeHtml(message)}</p>
-    </main>
-  </body>
-</html>`;
+function resetStartupLifecycle(appEntryUrl: string | null, packagedDistRoot: string | null): void {
+  clearStartupReadyTimer();
+  startupLifecycle.preloadReady = false;
+  startupLifecycle.rendererReady = false;
+  startupLifecycle.recoveryShown = false;
+  startupLifecycle.appEntryUrl = appEntryUrl;
+  startupLifecycle.safeEntryUrl = appEntryUrl
+    ? (() => {
+        const safeUrl = new URL(appEntryUrl);
+        safeUrl.searchParams.set('safe-recovery', '1');
+        return safeUrl.toString();
+      })()
+    : null;
+  startupLifecycle.packagedDistRoot = packagedDistRoot;
+}
 
-  return `data:text/html;charset=UTF-8,${encodeURIComponent(html)}`;
+function showMainWindowIfNeeded(): void {
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+    mainWindow.show();
+  }
+}
+
+function isTrustedRendererNavigation(targetUrl: string): boolean {
+  if (targetUrl.startsWith('data:text/html')) return true;
+  if (targetUrl.startsWith('about:blank')) return true;
+  if (targetUrl.startsWith('devtools://')) return true;
+
+  const appEntryUrl = startupLifecycle.appEntryUrl;
+  if (appEntryUrl) {
+    const appEntry = new URL(appEntryUrl);
+    const target = new URL(targetUrl);
+    if (appEntry.protocol === 'http:' || appEntry.protocol === 'https:') {
+      return target.origin === appEntry.origin;
+    }
+    if (target.protocol === 'file:' && startupLifecycle.packagedDistRoot) {
+      try {
+        return fileURLToPath(target).startsWith(startupLifecycle.packagedDistRoot);
+      } catch {
+        return false;
+      }
+    }
+  }
+
+  return false;
+}
+
+function isSafeExternalTarget(targetUrl: string): boolean {
+  return targetUrl.startsWith('https://') || targetUrl.startsWith('http://') || targetUrl.startsWith('mailto:');
+}
+
+async function showStartupRecovery(input: StartupFailureEventInput): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (startupLifecycle.recoveryShown && input.kind !== 'renderer_process_gone') return;
+
+  startupLifecycle.recoveryShown = true;
+  clearStartupReadyTimer();
+  const preliminarySnapshot = buildCurrentDiagnosticsSnapshot();
+  const preliminaryDraft = buildIssueReportDraft(preliminarySnapshot);
+  const descriptor = describeStartupFailure({
+    ...input,
+    diagnostics: preliminarySnapshot,
+    issueDraft: preliminaryDraft,
+  });
+
+  rememberFailureContext({
+    trigger: 'startup_failure',
+    message: descriptor.failureMessage,
+    detail: descriptor.technicalSummary,
+    channel: 'startup',
+    code: input.kind,
+  });
+
+  const snapshot = buildCurrentDiagnosticsSnapshot();
+  const draft = buildIssueReportDraft(snapshot);
+  log('WARN', 'startup', 'startup recovery shown', {
+    kind: input.kind,
+    retryAvailable: Boolean(startupLifecycle.appEntryUrl),
+    safeRecoveryAvailable: Boolean(startupLifecycle.safeEntryUrl),
+  });
+  await mainWindow.loadURL(buildStartupFailurePageUrl({
+    ...input,
+    diagnostics: snapshot,
+    issueDraft: draft,
+    retryTargetUrl: startupLifecycle.appEntryUrl,
+    safeTargetUrl: startupLifecycle.safeEntryUrl,
+  }));
+  showMainWindowIfNeeded();
+}
+
+function armRendererReadyWatchdog(): void {
+  clearStartupReadyTimer();
+  if (startupLifecycle.rendererReady || startupLifecycle.recoveryShown) return;
+
+  startupLifecycle.readyTimer = setTimeout(() => {
+    if (startupLifecycle.rendererReady || startupLifecycle.recoveryShown) return;
+    void showStartupRecovery({
+      kind: 'renderer_boot_timeout',
+      detail: startupLifecycle.preloadReady
+        ? 'The renderer HTML loaded, but the application UI never signaled readiness.'
+        : 'The renderer HTML loaded, but the preload bridge never signaled readiness.',
+    });
+  }, RENDERER_READY_TIMEOUT_MS);
 }
 
 function createWindow() {
   const preloadPath = getPreloadScriptPath(__dirname);
   const preloadExists = fs.existsSync(preloadPath);
+  const appEntryUrl = app.isPackaged
+    ? pathToFileURL(getPackagedRendererEntryPath(__dirname)).toString()
+    : 'http://localhost:5173';
+  const packagedDistRoot = app.isPackaged
+    ? path.dirname(getPackagedRendererEntryPath(__dirname))
+    : null;
+
+  resetStartupLifecycle(appEntryUrl, packagedDistRoot);
   log('INFO', 'startup', 'createWindow — begin', {
     preloadPath,
     preloadExists,
@@ -1980,6 +2070,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200, height: 800,
     minWidth: 960, minHeight: 650,
+    show: false,
     // hiddenInset is macOS-only; use default on Windows/Linux to avoid init crash
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     backgroundColor: '#050505',
@@ -1994,10 +2085,26 @@ function createWindow() {
   // ── Renderer lifecycle events ────────────────────────────────────────────
   mainWindow.webContents.on('did-finish-load', () => {
     log('INFO', 'startup', 'did-finish-load — renderer fully loaded');
+    showMainWindowIfNeeded();
+    if (!startupLifecycle.recoveryShown) {
+      armRendererReadyWatchdog();
+    }
   });
 
-  mainWindow.webContents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL) => {
-    log('ERROR', 'startup', 'did-fail-load', { errorCode, errorDescription, validatedURL });
+  mainWindow.webContents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (shouldIgnoreDidFailLoad({ errorCode, errorDescription, validatedURL, isMainFrame })) {
+      log('INFO', 'startup', 'did-fail-load ignored', { errorCode, errorDescription, validatedURL, isMainFrame });
+      return;
+    }
+
+    log('ERROR', 'startup', 'did-fail-load', { errorCode, errorDescription, validatedURL, isMainFrame });
+    void showStartupRecovery({
+      kind: 'did_fail_load',
+      errorCode,
+      errorDescription,
+      validatedURL,
+      detail: `Navigation failed with ${errorDescription} (${errorCode}).`,
+    });
   });
 
   mainWindow.webContents.on('render-process-gone' as any, (_e: unknown, details: { reason: string; exitCode: number }) => {
@@ -2006,10 +2113,17 @@ function createWindow() {
       exitCode: details.exitCode,
     });
     if (logger) logger.flush();
+    void showStartupRecovery({
+      kind: 'renderer_process_gone',
+      reason: details.reason,
+      exitCode: details.exitCode,
+      detail: `Renderer process exited with reason=${details.reason} exitCode=${details.exitCode}.`,
+    });
   });
 
   mainWindow.once('ready-to-show', () => {
     log('INFO', 'startup', 'ready-to-show — window painted, about to become visible');
+    showMainWindowIfNeeded();
   });
 
   mainWindow.on('show',  () => log('INFO', 'startup', 'window show event'));
@@ -2024,6 +2138,21 @@ function createWindow() {
     log('INFO', 'startup', 'renderer responsive again');
   });
 
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (!isTrustedRendererNavigation(url) && isSafeExternalTarget(url)) {
+      void shell.openExternal(url);
+    }
+    return { action: 'deny' };
+  });
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (isTrustedRendererNavigation(url)) return;
+    event.preventDefault();
+    if (isSafeExternalTarget(url)) {
+      void shell.openExternal(url);
+    }
+  });
+
   if (app.isPackaged) {
     const indexPath = getPackagedRendererEntryPath(__dirname);
     const indexExists = fs.existsSync(indexPath);
@@ -2034,28 +2163,29 @@ function createWindow() {
         preloadExists,
         indexExists,
       });
-      void mainWindow.loadURL(buildStartupFailurePageUrl(
-        'Startup failed',
-        'The packaged application bundle is incomplete. Reinstall the app or send a report from this screen.',
-      ));
+      void showStartupRecovery({
+        kind: 'missing_assets',
+        preloadExists,
+        indexExists,
+      });
       return;
     }
 
     void mainWindow.loadFile(indexPath).catch((error) => {
       log('FATAL', 'startup', 'loadFile failed', { error: String(error) });
-      void mainWindow?.loadURL(buildStartupFailurePageUrl(
-        'Startup failed',
-        'The application could not load its packaged interface. Reinstall the app or send a report from this screen.',
-      ));
+      void showStartupRecovery({
+        kind: 'load_rejected',
+        detail: String(error),
+      });
     });
   } else {
     log('INFO', 'startup', 'loadURL — dev server');
     void mainWindow.loadURL('http://localhost:5173').catch((error) => {
       log('FATAL', 'startup', 'loadURL failed', { error: String(error) });
-      void mainWindow?.loadURL(buildStartupFailurePageUrl(
-        'Development startup failed',
-        'The renderer dev server could not be reached. Restart the dev server and try again.',
-      ));
+      void showStartupRecovery({
+        kind: 'load_rejected',
+        detail: `Renderer dev server could not be reached: ${String(error)}`,
+      });
     });
   }
 
@@ -2451,9 +2581,7 @@ app.whenReady().then(async () => {
       
       // Clean up partial build directory
       try { fs.rmSync(efiPath, { recursive: true, force: true }); } catch (_) {}
-      const classifiedErr = new Error(classified.message);
-      (classifiedErr as any).classified = classified;
-      throw classifiedErr;
+      throw createClassifiedIpcError(classified, e);
     }
     return efiPath;
   });
@@ -2474,6 +2602,8 @@ app.whenReady().then(async () => {
         token.check();
         let result: { name: string; version: string } | null = null;
         let source: 'github' | 'embedded' | 'failed' = 'failed';
+        let githubFailureReason: string | null = null;
+        let embeddedFailureReason: string | null = null;
 
         // Layer 1: Try GitHub (latest version)
         try {
@@ -2487,6 +2617,7 @@ app.whenReady().then(async () => {
             result = null; // force fallback
           }
         } catch (err: any) {
+          githubFailureReason = err?.message ?? String(err);
           log('WARN', 'kext', `${kextName} — GitHub failed: ${err.message}, trying embedded`);
           result = null;
         }
@@ -2500,18 +2631,29 @@ app.whenReady().then(async () => {
               log('INFO', 'kext', `${kextName} — embedded fallback OK`, { version: result.version });
             } else {
               log('ERROR', 'kext', `${kextName} — embedded kext failed validation`);
+              embeddedFailureReason = 'Embedded fallback failed post-install validation';
               result = null;
             }
           } catch (embErr: any) {
+            embeddedFailureReason = embErr?.message ?? String(embErr);
             log('ERROR', 'kext', `${kextName} — embedded install failed: ${embErr.message}`);
             result = null;
           }
+        } else {
+          embeddedFailureReason = 'No embedded fallback is bundled for this kext';
         }
 
         // Hard fail — neither source worked
         if (!result) {
           const entry = KEXT_REGISTRY[kextName];
-          failedKexts.push({ name: kextName, repo: entry?.repo || 'unknown', error: 'Both GitHub and embedded fallback failed' });
+          const failureParts = [githubFailureReason, embeddedFailureReason]
+            .filter((value): value is string => Boolean(value))
+            .map((value) => value.trim());
+          failedKexts.push({
+            name: kextName,
+            repo: entry?.repo || 'unknown',
+            error: failureParts.length > 0 ? failureParts.join(' | ') : 'Both GitHub and embedded fallback failed',
+          });
           result = { name: kextName, version: 'offline' };
           source = 'failed';
           log('ERROR', 'kext', `${kextName} — HARD FAIL: no source available`);
@@ -2530,9 +2672,7 @@ app.whenReady().then(async () => {
       const classified = classifyError(e);
       if (!token.aborted) registry.fail(token.taskId, classified.message);
       else registry.cancel(token.taskId);
-      const classifiedErr = new Error(classified.message);
-      (classifiedErr as any).classified = classified;
-      throw classifiedErr;
+      throw createClassifiedIpcError(classified, e);
     }
   });
 
@@ -2590,9 +2730,7 @@ app.whenReady().then(async () => {
       const classified = classifyError(e);
       if (!token.aborted) registry.fail(token.taskId, classified.message);
       else registry.cancel(token.taskId);
-      const classifiedErr = new Error(classified.message);
-      (classifiedErr as any).classified = classified;
-      throw classifiedErr;
+      throw createClassifiedIpcError(classified, e);
     }
   });
 
@@ -2809,9 +2947,7 @@ app.whenReady().then(async () => {
       if (!token.aborted) registry.fail(token.taskId, classified.message);
       else registry.cancel(token.taskId);
       if (logger) logger.flush();
-      const classifiedErr = new Error(classified.message);
-      (classifiedErr as any).classified = classified;
-      throw classifiedErr;
+      throw createClassifiedIpcError(classified, e);
     }
   });
 
@@ -3134,9 +3270,7 @@ app.whenReady().then(async () => {
       log('ERROR', 'recovery', 'Recovery acquisition failed', { error: classified.explanation });
       if (!token.aborted) registry.fail(token.taskId, classified.message);
       else registry.cancel(token.taskId);
-      const classifiedErr = new Error(classified.message);
-      (classifiedErr as any).classified = classified;
-      throw classifiedErr;
+      throw createClassifiedIpcError(classified, e);
     }
   });
 
@@ -3388,6 +3522,18 @@ app.whenReady().then(async () => {
     return buildCurrentDiagnosticsSnapshot();
   });
 
+  ipcHandle('log:save-support-log', async (_event: Electron.IpcMainInvokeEvent, extraContext?: string | null) => {
+    return saveSupportLogToDesktop(extraContext ?? null);
+  });
+
+  ipcHandle('log:ui-event', async (_event: Electron.IpcMainInvokeEvent, eventName: string, detail?: Record<string, unknown> | null) => {
+    logger?.timeline('ui_event', undefined, {
+      event: eventName,
+      ...(detail ?? {}),
+    });
+    return true;
+  });
+
   ipcHandle('task:cancel', (_e: Electron.IpcMainInvokeEvent, taskId: string) => registry.cancel(taskId));
   ipcHandle('task:list',   () => registry.list());
 
@@ -3417,6 +3563,7 @@ app.whenReady().then(async () => {
   // Renderer crash / error reporting — called from preload's window.onerror
   ipcMain.on('renderer-error', (_e, payload: { type: string; message: string; stack?: string; source?: string; line?: number }) => {
     if (payload.type === 'preload-ping') {
+      startupLifecycle.preloadReady = true;
       log('INFO', 'renderer', payload.message);
     } else {
       log('ERROR', 'renderer', `[${payload.type}] ${payload.message}`, {
@@ -3433,6 +3580,15 @@ app.whenReady().then(async () => {
       });
     }
     logger?.flush();
+  });
+
+  ipcHandle('renderer:ready', async () => {
+    startupLifecycle.rendererReady = true;
+    clearStartupReadyTimer();
+    log('INFO', 'startup', 'renderer-ready handshake received', {
+      preloadReady: startupLifecycle.preloadReady,
+    });
+    return true;
   });
 
   // Issue reporter
@@ -3463,7 +3619,10 @@ app.whenReady().then(async () => {
     }
   });
 
-  mainWindow?.on('closed', () => { mainWindow = null; });
+  mainWindow?.on('closed', () => {
+    clearStartupReadyTimer();
+    mainWindow = null;
+  });
 
 });
 

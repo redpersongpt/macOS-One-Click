@@ -3,7 +3,7 @@ import type { CompatibilityReport } from './compatibility.js';
 import type { ValidationResult } from './configValidator.js';
 import type { DiskInfo } from './diskOps.js';
 import type { DiskIdentityFingerprint } from './flashSafety.js';
-import type { LogEntry } from './logger.js';
+import type { LogEntry, TimelineEntry } from './logger.js';
 import {
   redactSensitiveText,
   sanitizeTelemetryValue,
@@ -12,6 +12,7 @@ import {
 
 export type IssueReportTrigger =
   | 'manual_report'
+  | 'startup_failure'
   | 'efi_build_failure'
   | 'efi_validation_failure'
   | 'unexpected_runtime_error'
@@ -251,6 +252,8 @@ export function createDiagnosticsSnapshot(input: CreateDiagnosticsSnapshotInput)
 
 function triggerLabel(trigger: IssueReportTrigger): string {
   switch (trigger) {
+    case 'startup_failure':
+      return 'STARTUP_FAILURE';
     case 'efi_build_failure':
       return 'EFI_BUILD_FAILURE';
     case 'efi_validation_failure':
@@ -350,6 +353,41 @@ export function buildIssueReportDraft(snapshot: PublicDiagnosticsSnapshot): Issu
   ].join('\n');
 
   return { title, body, trigger: snapshot.trigger };
+}
+
+export function buildSavedSupportLog(
+  snapshot: PublicDiagnosticsSnapshot,
+  opsTail: TimelineEntry[],
+  extraContext?: string | null,
+): string {
+  const diagnostics = buildIssueReportDraft(snapshot).body;
+  const sanitizedOps = opsTail
+    .slice(-120)
+    .map((entry) => sanitizeTelemetryValue(entry) as TimelineEntry)
+    .map((entry) => {
+      const detail = Object.entries(entry.detail ?? {})
+        .map(([key, value]) => `${key}=${redactSensitiveText(String(value))}`)
+        .join(', ');
+      return `${entry.t} [${entry.kind}]${entry.taskId ? ` task=${entry.taskId}` : ''}${detail ? ` ${detail}` : ''}`;
+    });
+
+  const sections = [
+    'macOS One-Click Support Log',
+    '===========================',
+    `Generated: ${snapshot.timestamp}`,
+    `Session: ${snapshot.sessionFingerprint}`,
+    '',
+    diagnostics,
+    '',
+    '## Timeline (sanitized)',
+    sanitizedOps.length > 0 ? sanitizedOps.join('\n') : 'No recent timeline events captured.',
+  ];
+
+  if (extraContext?.trim()) {
+    sections.push('', '## Extra Context', redactSensitiveText(extraContext));
+  }
+
+  return sections.join('\n');
 }
 
 export async function openIssueReportUrl(
