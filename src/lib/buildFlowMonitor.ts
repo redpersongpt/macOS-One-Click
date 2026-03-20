@@ -82,6 +82,25 @@ export function latestTaskByKind(
   return latest;
 }
 
+export function latestTaskByKindSince(
+  tasks: Iterable<TaskState>,
+  kind: TaskKind,
+  minStartedAt: number,
+): TaskState | undefined {
+  let latest: TaskState | undefined;
+  for (const task of tasks) {
+    if (task.kind !== kind || task.startedAt < minStartedAt) continue;
+    if (!latest) {
+      latest = task;
+      continue;
+    }
+    if (task.startedAt > latest.startedAt || task.lastUpdateAt > latest.lastUpdateAt) {
+      latest = task;
+    }
+  }
+  return latest;
+}
+
 export function evaluateBuildFlowStall(
   snapshot: BuildFlowSnapshot | null,
   now: number,

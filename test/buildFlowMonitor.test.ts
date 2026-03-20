@@ -6,6 +6,7 @@ import {
   evaluateBuildFlowStall,
   evaluateStepTransitionWithOverrides,
   latestTaskByKind,
+  latestTaskByKindSince,
   type BuildFlowSnapshot,
 } from '../src/lib/buildFlowMonitor.js';
 import type { TaskState } from '../electron/taskManager.js';
@@ -137,5 +138,33 @@ describe('buildFlowMonitor', () => {
 
     const latest = latestTaskByKind(tasks, 'efi-build');
     assert.equal(latest?.taskId, 'efi-build-2');
+  });
+
+  test('ignores stale tasks from runs that started before the active build flow', () => {
+    const tasks: TaskState[] = [
+      {
+        taskId: 'kext-fetch-old',
+        kind: 'kext-fetch',
+        status: 'complete',
+        progress: null,
+        error: null,
+        startedAt: 100,
+        endedAt: 120,
+        lastUpdateAt: 120,
+      },
+      {
+        taskId: 'kext-fetch-new',
+        kind: 'kext-fetch',
+        status: 'running',
+        progress: null,
+        error: null,
+        startedAt: 2_000,
+        endedAt: null,
+        lastUpdateAt: 2_010,
+      },
+    ];
+
+    const latest = latestTaskByKindSince(tasks, 'kext-fetch', 1_000);
+    assert.equal(latest?.taskId, 'kext-fetch-new');
   });
 });

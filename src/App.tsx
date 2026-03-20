@@ -72,8 +72,14 @@ import {
   evaluateBuildFlowStall,
   evaluateStepTransitionWithOverrides,
   latestTaskByKind,
+  latestTaskByKindSince,
   type BuildFlowSnapshot,
 } from './lib/buildFlowMonitor.js';
+import {
+  canStartBuildRun,
+  createBuildEntryUiState,
+  taskBelongsToRun,
+} from './lib/buildRuntime.js';
 import type { PreflightReport, ConfidenceLevel } from '../electron/preventionLayer';
 import type { BuildPlan, RecoveryDryRun, Certainty } from '../electron/deterministicLayer';
 import type {
@@ -317,6 +323,7 @@ export default function App() {
   } | null>(null);
   const buildFlowRef = useRef<BuildFlowSnapshot | null>(null);
   const buildRunIdRef = useRef(0);
+  const buildStartRequestedRef = useRef(false);
   const biosAcceptedRef = useRef(false);
   const biosRefreshRequestIdRef = useRef(0);
   const buildAutoStartRef = useRef(false);
@@ -406,6 +413,7 @@ export default function App() {
 
   // ── Task Manager ────────────────────────────────────────────────
   const { tasks, activeTask, cancelTask } = useTaskManager();
+  const activeBuildRunStartedAt = buildFlow?.startedAt ?? null;
   const latestTasks = useMemo(() => {
     const latest = new Map<TaskKind, TaskState>();
     for (const task of tasks.values()) {
@@ -420,9 +428,15 @@ export default function App() {
   const kextTask  = activeTask('kext-fetch');
   const efiTask   = activeTask('efi-build');
   const flashTask = activeTask('usb-flash');
-  const latestEfiTask = latestTaskByKind(tasks.values(), 'efi-build') ?? latestTasks.get('efi-build');
-  const latestKextTask = latestTaskByKind(tasks.values(), 'kext-fetch') ?? latestTasks.get('kext-fetch');
-  const latestRecoveryTask = latestTaskByKind(tasks.values(), 'recovery-download') ?? latestTasks.get('recovery-download');
+  const latestEfiTask = activeBuildRunStartedAt == null
+    ? latestTaskByKind(tasks.values(), 'efi-build') ?? latestTasks.get('efi-build')
+    : latestTaskByKindSince(tasks.values(), 'efi-build', activeBuildRunStartedAt);
+  const latestKextTask = activeBuildRunStartedAt == null
+    ? latestTaskByKind(tasks.values(), 'kext-fetch') ?? latestTasks.get('kext-fetch')
+    : latestTaskByKindSince(tasks.values(), 'kext-fetch', activeBuildRunStartedAt);
+  const latestRecoveryTask = activeBuildRunStartedAt == null
+    ? latestTaskByKind(tasks.values(), 'recovery-download') ?? latestTasks.get('recovery-download')
+    : latestTaskByKindSince(tasks.values(), 'recovery-download', activeBuildRunStartedAt);
 
   const isImportingRef = useRef(false);
   const isRetryingRecovRef = useRef(false);
@@ -488,6 +502,7 @@ export default function App() {
     });
     buildRunIdRef.current += 1;
     isDeployingRef.current = false;
+    buildStartRequestedRef.current = false;
     updateBuildFlow((current) => current ? {
       ...current,
       active: false,
@@ -1006,7 +1021,8 @@ export default function App() {
   // Drive kextResults / progress from the live kext task state
   useEffect(() => {
     const p = kextTask?.progress as { kind: string; kextName?: string; version?: string; index?: number; total?: number } | null | undefined;
-    if (!p || p.kind !== 'kext-fetch') return;
+    const snapshot = buildFlowRef.current;
+    if (!p || p.kind !== 'kext-fetch' || !taskBelongsToRun(kextTask, snapshot?.startedAt)) return;
     if (p.kextName) {
       setKextResults(prev => prev.find(k => k.name === p.kextName) ? prev : [...prev, { name: p.kextName!, version: p.version ?? '' }]);
     }
@@ -1029,7 +1045,8 @@ export default function App() {
   // Drive building progress from the live EFI build task state
   useEffect(() => {
     const p = efiTask?.progress as { kind: string; phase?: string; detail?: string } | null | undefined;
-    if (!p) return;
+    const snapshot = buildFlowRef.current;
+    if (!p || !taskBelongsToRun(efiTask, snapshot?.startedAt)) return;
     if (p.phase) setStatus(p.phase);
     updateBuildFlow((current) => {
       if (!current?.active || current.activeTaskKind !== 'efi-build') return current;
@@ -1056,14 +1073,15 @@ export default function App() {
   }, [flashTask?.progress]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    const task = buildFlowRef.current?.activeTaskKind === 'efi-build'
+    const snapshot = buildFlowRef.current;
+    const task = snapshot?.activeTaskKind === 'efi-build'
       ? latestEfiTask
-      : buildFlowRef.current?.activeTaskKind === 'kext-fetch'
+      : snapshot?.activeTaskKind === 'kext-fetch'
       ? latestKextTask
-      : buildFlowRef.current?.activeTaskKind === 'recovery-download'
+      : snapshot?.activeTaskKind === 'recovery-download'
       ? latestRecoveryTask
       : null;
-    if (!task) return;
+    if (!task || !taskBelongsToRun(task, snapshot?.startedAt)) return;
     updateBuildFlow((current) => {
       if (!current?.active || current.activeTaskKind !== task.kind) return current;
       return {
@@ -1400,6 +1418,11 @@ export default function App() {
     advanceToBuildStep: () => {
       buildAutoStartRef.current = true;
       setBiosAcceptedRuntime(true);
+      const buildEntryUiState = createBuildEntryUiState();
+      setProgress(buildEntryUiState.progress);
+      setStatus(buildEntryUiState.statusText);
+      setBuildFlow(null);
+      setBuildFlowAlert(null);
       const nextBuildGuard = evaluateBuildGuard({
         compatibilityBlocked,
         biosFlowState: 'complete',
@@ -1442,23 +1465,64 @@ export default function App() {
   };
 
   const startDeploy = async () => {
-    if (!profile || isDeployingRef.current) return;
+    if (!canStartBuildRun({
+      hasProfile: Boolean(profile),
+      isDeploying: isDeployingRef.current,
+      startRequested: buildStartRequestedRef.current,
+    })) return;
+    buildStartRequestedRef.current = true;
+    if (!profile) {
+      buildStartRequestedRef.current = false;
+      return;
+    }
+    const buildEntryUiState = createBuildEntryUiState();
+    setProgress(buildEntryUiState.progress);
+    setStatus(buildEntryUiState.statusText);
     const allowAcceptedSession = biosAcceptedRef.current;
     const liveBiosState = (biosReady || allowAcceptedSession) ? biosState : await refreshBiosState(profile, { redirectIfBlocked: true });
     if (!liveBiosState) {
+      buildStartRequestedRef.current = false;
       return;
     }
     const guard = await ensureBuildGuard(profile, { surfaceError: true });
     if (!guard.allowed) {
+      buildStartRequestedRef.current = false;
       return;
     }
     isDeployingRef.current = true;
-    invalidateGeneratedBuild();
-    setBuildPlan(null);
-    setRecoveryDryRun(null);
-    setBuildFlowAlert(null);
     const runId = buildRunIdRef.current + 1;
     buildRunIdRef.current = runId;
+    buildFlowRef.current = null;
+    setBuildFlow(null);
+    setBuildFlowAlert(null);
+    setEfiPath(null);
+    setBuildReady(false);
+    setValidationResult(null);
+    setKextResults([]);
+    setRecovPct(0);
+    setRecovStatus('');
+    setRecovError(null);
+    setRecovOffset(0);
+    setRecovDmgDest(null);
+    setRecovClDest(null);
+    setCachedRecovInfo(null);
+    setSelectedUsb(null);
+    setDiskInfo(null);
+    setFlashMilestones([]);
+    setRecoveryDryRun(null);
+    setShowFlashConfirm(false);
+    setShowPartitionConfirm(false);
+    setFlashConfirmationToken(null);
+    setFlashConfirmationExpiresAt(null);
+    setFlashConfirmText('');
+    setFlashChecks(new Set());
+    setEfiReport(null);
+    setCommunityIssues([]);
+    setShowEfiReport(false);
+    setResourcePlan(null);
+    setSafeSimulationResult(null);
+    setEfiBackupPolicy(null);
+    setBuildPlan(null);
     const isCurrentRun = () => buildRunIdRef.current === runId;
     const applyBuildFlowSnapshot = (patch: Partial<BuildFlowSnapshot>) => {
       updateBuildFlow((current) => {
@@ -1488,7 +1552,7 @@ export default function App() {
       });
     };
     try {
-      setStep('building'); setProgress(0);
+      setStep('building');
       applyBuildFlowSnapshot({
         phase: 'preflight',
         uiStep: 'building',
@@ -1858,12 +1922,18 @@ export default function App() {
     } finally {
       if (isCurrentRun()) {
         isDeployingRef.current = false;
+        buildStartRequestedRef.current = false;
       }
     }
   };
 
   useEffect(() => {
-    if (step !== 'building' || !buildAutoStartRef.current || isDeployingRef.current) {
+    if (
+      step !== 'building'
+      || !buildAutoStartRef.current
+      || isDeployingRef.current
+      || buildStartRequestedRef.current
+    ) {
       return;
     }
     buildAutoStartRef.current = false;
@@ -2715,7 +2785,7 @@ export default function App() {
                       statusText={statusText}
                       notice={step === 'building' ? buildProgressNotice : null}
                       stages={buildStages}
-                      onBegin={startDeploy}
+                      onBegin={buildAutoStartRef.current || buildStartRequestedRef.current || buildFlow?.active ? undefined : startDeploy}
                       briefing={{
                         heading: 'Getting ready to prepare your installer',
                         bullets: [
