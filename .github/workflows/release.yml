@@ -112,9 +112,8 @@ jobs:
             - macOS packaged build
 
             Notes:
-            - The app's destructive flash safety, BIOS gating, EFI validation, and tokenized authorization are unchanged.
-            - This release keeps the packaged startup-path fix in place so published Windows/Linux packages do not open to a black screen.
-            - Community evidence, guided fixes, and planning modes are advisory only and do not change destructive write authority.
+            - See CHANGELOG.md in this tag for the exact release notes.
+            - Destructive flash safety, BIOS gating, EFI validation, backup policy, and tokenized authorization remain enforced.
           files: release-artifacts/**/*
           draft: false
           prerelease: false

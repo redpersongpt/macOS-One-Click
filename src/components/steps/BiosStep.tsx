@@ -26,7 +26,8 @@ interface Props {
   resumeState: BiosResumeStateResponse | null;
   restartCapability: FirmwareRestartCapability | null;
   onApplySupportedChanges: (selectedChanges: Record<string, BiosSettingSelection>) => Promise<{ message: string }>;
-  onVerifyAndContinue: (selectedChanges: Record<string, BiosSettingSelection>) => Promise<boolean>;
+  onRecheckBios: (selectedChanges: Record<string, BiosSettingSelection>) => Promise<{ advanced: boolean; message: string }>;
+  onContinueWithCurrentBiosState: (selectedChanges: Record<string, BiosSettingSelection>) => Promise<{ advanced: boolean; message: string }>;
   onRestartToBios: (selectedChanges: Record<string, BiosSettingSelection>) => Promise<{ supported: boolean; error?: string }>;
 }
 
@@ -69,14 +70,15 @@ export default function BiosStep({
   resumeState,
   restartCapability,
   onApplySupportedChanges,
-  onVerifyAndContinue,
+  onRecheckBios,
+  onContinueWithCurrentBiosState,
   onRestartToBios,
 }: Props) {
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [restartState, setRestartState] = useState<RestartState>('idle');
   const [restartError, setRestartError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const [busyAction, setBusyAction] = useState<'apply' | 'verify' | null>(null);
+  const [busyAction, setBusyAction] = useState<'apply' | 'recheck' | 'continue' | null>(null);
   const [applyModes, setApplyModes] = useState<Record<string, BiosApplyMode>>({});
   const [selectedSettingId, setSelectedSettingId] = useState<string | null>(null);
 
@@ -171,14 +173,29 @@ export default function BiosStep({
     }
   };
 
-  const handleVerifyAndContinue = async () => {
-    setBusyAction('verify');
+  const handleRecheckBios = async () => {
+    setBusyAction('recheck');
     setActionMessage(null);
     try {
-      const ready = await onVerifyAndContinue(buildSelectedChanges());
-      if (!ready) setActionMessage('Required settings must be verified before continuing.');
+      const result = await onRecheckBios(buildSelectedChanges());
+      setActionMessage(result.message);
     } catch (e: any) {
-      setActionMessage(e.message || 'Failed to verify settings.');
+      setActionMessage(e.message || 'BIOS recheck failed.');
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleContinue = async () => {
+    setBusyAction('continue');
+    setActionMessage(null);
+    try {
+      const result = await onContinueWithCurrentBiosState(buildSelectedChanges());
+      if (!result.advanced) {
+        setActionMessage(result.message);
+      }
+    } catch (e: any) {
+      setActionMessage(e.message || 'Could not continue from the current BIOS state.');
     } finally {
       setBusyAction(null);
     }
@@ -540,7 +557,7 @@ export default function BiosStep({
             {orchestratorState && counts.autoEligible > 0 && (
               <button
                 onClick={handleApplySupported}
-                disabled={busyAction === 'apply'}
+                disabled={busyAction !== null}
                 className="px-3.5 py-2 rounded-xl border border-white/8 bg-white/[0.03] text-white/50 text-xs font-medium hover:bg-white/[0.06] hover:text-white/70 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
               >
                 {busyAction === 'apply' ? 'Applying...' : 'Apply supported changes'}
@@ -562,17 +579,28 @@ export default function BiosStep({
               {requiredItems.filter(item => checked.has(item.id) || item.verificationStatus === 'verified').length} / {requiredItems.length}
             </span>
             <button
-              onClick={handleVerifyAndContinue}
-              disabled={!allDone || busyAction === 'verify'}
+              onClick={handleRecheckBios}
+              disabled={busyAction !== null}
+              className="px-4 py-2.5 rounded-xl border border-white/8 bg-white/[0.03] text-sm font-semibold text-white/70 transition-all hover:bg-white/[0.06] cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {busyAction === 'recheck' ? 'Rechecking BIOS...' : 'Recheck BIOS'}
+            </button>
+            <button
+              onClick={handleContinue}
+              disabled={busyAction !== null}
               className={`px-6 py-2.5 rounded-xl text-sm font-semibold transition-all ${
                 allDone
                   ? 'bg-blue-600 text-white hover:bg-blue-500 shadow-lg shadow-blue-600/15 cursor-pointer'
-                  : 'bg-white/[0.03] text-white/25 cursor-not-allowed'
-              }`}
+                  : 'bg-white/[0.03] text-white/55 hover:bg-white/[0.06] cursor-pointer'
+              } disabled:cursor-not-allowed disabled:opacity-40`}
             >
-              {busyAction === 'verify' ? 'Rechecking...' : 'Recheck BIOS and Continue'}
+              {busyAction === 'continue' ? 'Continuing...' : 'Continue'}
             </button>
           </div>
+        </div>
+
+        <div className="mt-2 text-[10px] text-white/18 leading-relaxed">
+          Recheck BIOS refreshes the firmware checklist. Continue uses the current checklist without rerunning the BIOS probe.
         </div>
 
         {/* ── 6. Reboot resume notice ─────────────────────────────── */}

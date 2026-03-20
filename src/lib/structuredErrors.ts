@@ -15,6 +15,33 @@ const ERROR_MAP: Array<{
   structured: StructuredError;
 }> = [
   {
+    test: m => m.includes('bios_recheck_failed') || m.includes('bios recheck failed'),
+    structured: {
+      title: 'BIOS recheck failed',
+      what: 'The app could not refresh the firmware checklist from the current machine state.',
+      nextStep: 'Stay on the BIOS step, review the checklist manually, and try Recheck BIOS again.',
+      retryable: true,
+    },
+  },
+  {
+    test: m => m.includes('bios_state_unavailable') || m.includes('bios state is unavailable'),
+    structured: {
+      title: 'BIOS state is unavailable',
+      what: 'The current BIOS checklist is missing or stale, so the app cannot continue from this step safely.',
+      nextStep: 'Use Recheck BIOS to rebuild the checklist for this hardware session.',
+      retryable: true,
+    },
+  },
+  {
+    test: m => m.includes('bios_requirements_not_met') || m.includes('required bios setting') || m.includes('bios preparation is incomplete'),
+    structured: {
+      title: 'BIOS settings still need attention',
+      what: 'One or more required BIOS settings are still missing or unverified.',
+      nextStep: 'Fix the failed or unknown BIOS items in firmware, then use Recheck BIOS to confirm them.',
+      retryable: true,
+    },
+  },
+  {
     test: m => m.includes('no supported display path') || m.includes('val_gpu_no_supported_path'),
     structured: {
       title: 'No supported display path',

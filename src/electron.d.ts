@@ -32,6 +32,7 @@ declare global {
       getBiosState: (profile: any) => Promise<import('../electron/bios/types').BiosOrchestratorState>;
       applySupportedBiosChanges: (profile: any, selectedChanges: Record<string, BiosSettingSelection>) => Promise<{ state: import('../electron/bios/types').BiosOrchestratorState; appliedCount: number; message: string }>;
       verifyManualBiosChanges: (profile: any, selectedChanges: Record<string, BiosSettingSelection>) => Promise<import('../electron/bios/types').BiosOrchestratorState>;
+      continueBiosWithCurrentState: (profile: any, selectedChanges: Record<string, BiosSettingSelection>) => Promise<import('../electron/bios/types').BiosOrchestratorState>;
       restartToFirmwareWithSession: (profile: any, selectedChanges: Record<string, BiosSettingSelection>) => Promise<{ supported: boolean; error?: string; state: import('../electron/bios/types').BiosOrchestratorState }>;
       clearBiosSession: () => Promise<boolean>;
       getBiosResumeState: () => Promise<import('../electron/bios/types').BiosResumeStateResponse>;

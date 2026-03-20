@@ -26,8 +26,8 @@ import {
 import { createHardwareProfileStore } from './hardwareProfileStore.js';
 import { parseMacOSVersion } from './hackintoshRules.js';
 import { buildBiosOrchestratorState } from './bios/orchestrator.js';
-import { buildHardwareFingerprint, clearBiosSession, createBiosSession, loadBiosSession, saveBiosSession, updateBiosSessionStage } from './bios/sessionState.js';
-import { verifyBiosSelections } from './bios/verification.js';
+import { persistBiosOrchestratorState } from './bios/statePersistence.js';
+import { buildHardwareFingerprint, clearBiosSession, loadBiosSession, saveBiosSession, updateBiosSessionStage } from './bios/sessionState.js';
 import type { BiosOrchestratorState, BiosSessionState, BiosSettingSelection } from './bios/types.js';
 import { createLogger } from './logger.js';
 import {
@@ -1455,65 +1455,33 @@ async function verifyAndPersistBiosState(
   selectedChanges?: Record<string, BiosSettingSelection>,
   stage: BiosSessionState['stage'] = 'planned',
 ): Promise<BiosOrchestratorState> {
-  const existing = loadBiosSession(app.getPath('userData'));
-  const hardwareFingerprint = buildHardwareFingerprint(profile);
-  const activeSession = existing?.hardwareFingerprint === hardwareFingerprint ? existing : null;
   const firmwareInfo = await getLiveFirmwareInfo();
-  const baseState = buildBiosOrchestratorState({
-    profile,
-    biosConfig: getBIOSSettings(profile),
-    firmwareInfo,
-    platform: process.platform,
-    safeMode: true,
-    session: activeSession,
-  });
-  const finalSelections = selectedChanges ?? (activeSession?.selectedChanges as Record<string, BiosSettingSelection> | undefined) ?? Object.fromEntries(
-    baseState.settings.map(setting => [setting.id, { approved: false, applyMode: setting.applyMode }]),
-  );
-  const verification = verifyBiosSelections({
-    settings: baseState.settings,
-    firmwareInfo,
-    selectedChanges: finalSelections,
-  });
-
-  const nextStage = verification.readyToBuild ? 'complete' : stage;
-  const session = createBiosSession({
+  return persistBiosOrchestratorState({
     userDataPath: app.getPath('userData'),
     profile,
-    vendor: baseState.vendor,
-    stage: nextStage,
-    rebootRequested: nextStage === 'awaiting_return' || nextStage === 'rebooting_to_firmware',
-    selectedChanges: finalSelections,
-    previousSessionId: activeSession?.sessionId ?? null,
-  });
-
-  const finalState = buildBiosOrchestratorState({
-    profile,
     biosConfig: getBIOSSettings(profile),
     firmwareInfo,
     platform: process.platform,
     safeMode: true,
-    session,
+    selectedChanges,
+    stageWhenBlocked: stage,
   });
+}
 
-  if (finalState.readyToBuild && finalState.session && finalState.session.stage !== 'complete') {
-    saveBiosSession(app.getPath('userData'), {
-      ...finalState.session,
-      stage: 'complete',
-      rebootRequested: false,
-      timestamp: Date.now(),
-    });
-    return buildBiosOrchestratorState({
-      profile,
-      biosConfig: getBIOSSettings(profile),
-      firmwareInfo,
-      platform: process.platform,
-      safeMode: true,
-      session: loadBiosSession(app.getPath('userData')),
-    });
-  }
-
-  return finalState;
+async function continueWithCurrentBiosState(
+  profile: HardwareProfile,
+  selectedChanges?: Record<string, BiosSettingSelection>,
+): Promise<BiosOrchestratorState> {
+  return persistBiosOrchestratorState({
+    userDataPath: app.getPath('userData'),
+    profile,
+    biosConfig: getBIOSSettings(profile),
+    firmwareInfo: null,
+    platform: process.platform,
+    safeMode: true,
+    selectedChanges,
+    stageWhenBlocked: 'partially_verified',
+  });
 }
 
 async function ensureBiosReady(profile: HardwareProfile): Promise<void> {
@@ -2372,6 +2340,10 @@ app.whenReady().then(async () => {
 
   ipcHandle('bios:verify-manual', async (_event: Electron.IpcMainInvokeEvent, profile: HardwareProfile, selectedChanges: Record<string, BiosSettingSelection>) => {
     return verifyAndPersistBiosState(profile, selectedChanges, 'verifying');
+  });
+
+  ipcHandle('bios:continue-current-state', async (_event: Electron.IpcMainInvokeEvent, profile: HardwareProfile, selectedChanges: Record<string, BiosSettingSelection>) => {
+    return continueWithCurrentBiosState(profile, selectedChanges);
   });
 
   ipcHandle('bios:restart-to-firmware', async (_event: Electron.IpcMainInvokeEvent, profile: HardwareProfile, selectedChanges: Record<string, BiosSettingSelection>) => {

@@ -45,6 +45,12 @@ import type { TaskKind, TaskState } from '../electron/taskManager';
 import { BEGINNER_SAFETY_MODE } from './config';
 import { getSuggestionPayload, type Suggestion } from './lib/suggestionEngine';
 import { buildFailureRecoveryViewModel, parseFailureRecoveryPayload } from './lib/failureRecovery.js';
+import {
+  buildBiosRecoveryPayload,
+  performBiosContinue,
+  performBiosRecheck,
+  type BiosRecoveryCode,
+} from './lib/biosStepFlow.js';
 import { resolveBackToSafetyStep, resolveRecoveryRetryAction } from './lib/recoveryRouting.js';
 import {
   isCompatibilityBlocked,
@@ -100,6 +106,7 @@ declare global {
       getBiosState: (profile: import('../electron/configGenerator').HardwareProfile) => Promise<BiosOrchestratorState>;
       applySupportedBiosChanges: (profile: import('../electron/configGenerator').HardwareProfile, selectedChanges: Record<string, BiosSettingSelection>) => Promise<{ state: BiosOrchestratorState; appliedCount: number; message: string }>;
       verifyManualBiosChanges: (profile: import('../electron/configGenerator').HardwareProfile, selectedChanges: Record<string, BiosSettingSelection>) => Promise<BiosOrchestratorState>;
+      continueBiosWithCurrentState: (profile: import('../electron/configGenerator').HardwareProfile, selectedChanges: Record<string, BiosSettingSelection>) => Promise<BiosOrchestratorState>;
       restartToFirmwareWithSession: (profile: import('../electron/configGenerator').HardwareProfile, selectedChanges: Record<string, BiosSettingSelection>) => Promise<{ supported: boolean; error?: string; state: BiosOrchestratorState }>;
       clearBiosSession: () => Promise<boolean>;
       getBiosResumeState: () => Promise<import('../electron/bios/types').BiosResumeStateResponse>;
@@ -564,6 +571,28 @@ export default function App() {
     });
   };
 
+  const openBiosRecoverySurface = (
+    code: BiosRecoveryCode,
+    options?: {
+      detail?: string | null;
+      state?: Pick<BiosOrchestratorState, 'blockingIssues' | 'settings'> | null;
+    },
+  ) => {
+    const payload = buildBiosRecoveryPayload({
+      code,
+      detail: options?.detail ?? null,
+      state: options?.state ?? null,
+    });
+    setGlobalNotice(null);
+    setGlobalError(JSON.stringify(payload));
+    logUiEvent('error_surface_opened', {
+      step: 'bios',
+      code: payload.code ?? code,
+      message: payload.message,
+      rawMessage: options?.detail ?? payload.explanation ?? payload.message,
+    });
+  };
+
   useEffect(() => {
     const onRuntimeError = (event: Event) => {
       const detail = (event as CustomEvent<{ type?: string; message?: string }>).detail ?? {};
@@ -762,7 +791,9 @@ export default function App() {
       }
       return nextState;
     } catch (e: any) {
-      setErrorWithSuggestion(e.message || 'Failed to evaluate BIOS preparation state.', 'bios');
+      openBiosRecoverySurface('bios_recheck_failed', {
+        detail: e?.message || 'Failed to evaluate BIOS preparation state.',
+      });
       return null;
     }
   };
@@ -1286,36 +1317,57 @@ export default function App() {
     return { message: result.message };
   };
 
-  const verifyBiosAndContinue = async (selectedChanges: Record<string, BiosSettingSelection>) => {
-    if (!profile) throw new Error('Hardware profile missing for BIOS verification.');
-    const state = await window.electron.verifyManualBiosChanges(profile, selectedChanges);
-    setBiosState(state);
-    if (!state.readyToBuild || state.stage !== 'complete') {
-      setErrorWithSuggestion(state.blockingIssues[0] ?? 'BIOS preparation is incomplete. Verify the required firmware settings before continuing.', 'bios');
-      return false;
-    }
-    const guard = await ensureBuildGuard(profile, { surfaceError: true });
-    if (!guard.allowed) {
-      return false;
-    }
-    const transition = attemptStepTransition('building', {
-      biosReady: true,
-      localBuildGuard: {
-        allowed: true,
-        reason: null,
-        currentState: 'build',
-        biosState: 'complete',
-      },
-    });
-    if (!transition?.ok) {
-      setGlobalError(describeBuildFlowFailure(
-        transition?.reason ?? 'The app could not enter the EFI build step after BIOS verification succeeded.',
-        transition?.redirect ?? 'bios',
-      ));
-      return false;
-    }
-    return true;
-  };
+  const recheckBiosState = async (selectedChanges: Record<string, BiosSettingSelection>) => performBiosRecheck({
+    profile,
+    currentState: biosState,
+    applyVerifiedState: setBiosState,
+    recheckManualChanges: (activeProfile, changes) => window.electron.verifyManualBiosChanges(activeProfile, changes),
+    continueWithCurrentState: (activeProfile, changes) => window.electron.continueBiosWithCurrentState(activeProfile, changes),
+    advanceToBuildStep: () => false,
+    openRecoverySurface: (payload) => {
+      setGlobalNotice(null);
+      setGlobalError(JSON.stringify(payload));
+      logUiEvent('error_surface_opened', {
+        step: 'bios',
+        code: payload.code ?? 'bios_recheck_failed',
+        message: payload.message,
+        rawMessage: payload.rawMessage ?? payload.explanation ?? payload.message,
+      });
+    },
+  }, selectedChanges);
+
+  const continueFromCurrentBiosState = async (selectedChanges: Record<string, BiosSettingSelection>) => performBiosContinue({
+    profile,
+    currentState: biosState,
+    applyVerifiedState: setBiosState,
+    recheckManualChanges: (activeProfile, changes) => window.electron.verifyManualBiosChanges(activeProfile, changes),
+    continueWithCurrentState: (activeProfile, changes) => window.electron.continueBiosWithCurrentState(activeProfile, changes),
+    advanceToBuildStep: () => {
+      const nextBuildGuard = evaluateBuildGuard({
+        compatibilityBlocked,
+        biosFlowState: 'complete',
+        releaseFlowState,
+      });
+      const transition = attemptStepTransition('building', {
+        biosReady: true,
+        localBuildGuard: nextBuildGuard,
+      });
+      if (!transition?.ok) {
+        return false;
+      }
+      return true;
+    },
+    openRecoverySurface: (payload) => {
+      setGlobalNotice(null);
+      setGlobalError(JSON.stringify(payload));
+      logUiEvent('error_surface_opened', {
+        step: 'bios',
+        code: payload.code ?? 'bios_continue_failed',
+        message: payload.message,
+        rawMessage: payload.rawMessage ?? payload.explanation ?? payload.message,
+      });
+    },
+  }, selectedChanges);
 
   const restartToFirmwareWithSession = async (selectedChanges: Record<string, BiosSettingSelection>) => {
     if (!profile) return { supported: false, error: 'Hardware profile missing for BIOS reboot.' };
@@ -1323,7 +1375,7 @@ export default function App() {
     setBiosState(result.state);
     window.electron.getBiosResumeState().then(setBiosResumeState).catch(() => {});
     if (!result.supported && result.error) {
-      setErrorWithSuggestion(result.error, 'bios');
+      openBiosRecoverySurface('bios_restart_failed', { detail: result.error });
     }
     return { supported: result.supported, error: result.error };
   };
@@ -2539,7 +2591,8 @@ export default function App() {
                       resumeState={biosResumeState}
                       restartCapability={restartCapability}
                       onApplySupportedChanges={applySupportedBiosChanges}
-                      onVerifyAndContinue={verifyBiosAndContinue}
+                      onRecheckBios={recheckBiosState}
+                      onContinueWithCurrentBiosState={continueFromCurrentBiosState}
                       onRestartToBios={restartToFirmwareWithSession}
                     />
                   </motion.div>
@@ -3383,7 +3436,7 @@ export default function App() {
       <AnimatePresence>
         {debugOpen && (
           <DebugOverlay
-            appVersion="2.3.2"
+            appVersion="2.3.3"
             platform={platform}
             sessionId={debugSessionId}
             currentStep={step}

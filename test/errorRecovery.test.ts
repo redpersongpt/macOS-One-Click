@@ -40,11 +40,14 @@ describe('error recovery messaging', () => {
   test('maps lower-cased permission and build blockers to structured guidance', () => {
     const permission = structureError('permission denied: raw disk access failed');
     const buildBlocked = structureError('build will fail: 2 kext(s) unavailable: Lilu.kext');
+    const biosBlocked = structureError('bios_requirements_not_met: Secure Boot is not verified');
 
     assert.match(permission.title, /permission denied/i);
     assert.match(permission.nextStep, /administrator|sudo/i);
     assert.match(buildBlocked.title, /build is blocked/i);
     assert.match(buildBlocked.nextStep, /fix the blocker/i);
+    assert.match(biosBlocked.title, /bios settings still need attention/i);
+    assert.match(biosBlocked.nextStep, /recheck bios/i);
   });
 
   test('classifies classified recovery rejection and pre-build failures without falling back to unknown retry', () => {

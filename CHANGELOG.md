@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.3.3 - 2026-03-20
+
+- Fixed the BIOS-step recovery bug where the combined recheck/continue flow could fall into a generic unknown-error surface instead of staying in a clear BIOS-specific path.
+- Split the BIOS step into distinct Recheck BIOS and Continue actions so recheck reruns firmware detection while continue uses the current known checklist state without silently probing again.
+- Added BIOS-specific recovery messaging and session persistence for continuing from the current BIOS state, while keeping the later build/deploy safety gates unchanged.
+
 ## 2.3.2 - 2026-03-20
 
 - Fixed a release-blocking EFI build pipeline bug where renderer-side step transitions could read stale state after a successful build and leave the app looking stuck instead of moving forward or failing clearly.

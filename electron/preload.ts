@@ -80,6 +80,8 @@ try {
       ipcRenderer.invoke('bios:apply-supported', profile, selectedChanges),
     verifyManualBiosChanges: (profile: object, selectedChanges: Record<string, BiosSettingSelection>) =>
       ipcRenderer.invoke('bios:verify-manual', profile, selectedChanges),
+    continueBiosWithCurrentState: (profile: object, selectedChanges: Record<string, BiosSettingSelection>) =>
+      ipcRenderer.invoke('bios:continue-current-state', profile, selectedChanges),
     restartToFirmwareWithSession: (profile: object, selectedChanges: Record<string, BiosSettingSelection>) =>
       ipcRenderer.invoke('bios:restart-to-firmware', profile, selectedChanges),
     clearBiosSession: () => ipcRenderer.invoke('bios:clear-session'),
