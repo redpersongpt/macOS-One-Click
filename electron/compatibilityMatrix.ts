@@ -1,12 +1,13 @@
 import type { HardwareProfile } from './configGenerator.js';
 import {
   checkCompatibility,
+  type CompatibilityPlanningMode,
   type CompatibilityLevel,
   type CompatibilityReport,
 } from './compatibility.js';
 import { MACOS_VERSIONS } from './hackintoshRules.js';
 
-export type CompatibilityMatrixStatus = 'supported' | 'partial' | 'blocked';
+export type CompatibilityMatrixStatus = 'supported' | 'experimental' | 'risky' | 'blocked';
 
 export interface CompatibilityMatrixRow {
   versionId: string;
@@ -24,14 +25,18 @@ export interface CompatibilityMatrix {
   recommendedVersion: string;
 }
 
+export interface CompatibilityMatrixOptions {
+  planningMode?: CompatibilityPlanningMode;
+}
+
 export function classifyCompatibilityMatrixStatus(report: CompatibilityReport): CompatibilityMatrixStatus {
   switch (report.level) {
     case 'supported':
       return 'supported';
-    case 'supported_with_warnings':
-    case 'partial_support':
-    case 'low_confidence':
-      return 'partial';
+    case 'experimental':
+      return 'experimental';
+    case 'risky':
+      return 'risky';
     case 'blocked':
     default:
       return 'blocked';
@@ -42,22 +47,44 @@ function summarizeCompatibilityReason(report: CompatibilityReport): string {
   if (report.errors.length > 0) {
     return report.errors[0];
   }
-  if (report.level === 'supported_with_warnings' || report.level === 'partial_support') {
+  if (report.level === 'experimental' || report.level === 'risky') {
     return report.warnings[0] ?? report.explanation;
   }
-  if (report.level === 'low_confidence') {
+  if (report.communityEvidence?.summary) {
+    return report.communityEvidence.summary;
+  }
+  if (report.manualVerificationRequired) {
     return report.explanation;
   }
   return report.explanation;
 }
 
-export function buildCompatibilityMatrix(profile: HardwareProfile): CompatibilityMatrix {
-  const baseline = checkCompatibility(profile);
+function choosePlanningRecommendation(
+  rows: CompatibilityMatrixRow[],
+  baselineRecommendedVersion: string,
+  planningMode: CompatibilityPlanningMode,
+): string {
+  if (planningMode === 'exploratory') {
+    return rows.find((row) => row.status !== 'blocked')?.versionName ?? baselineRecommendedVersion;
+  }
+
+  return baselineRecommendedVersion
+    || rows.find((row) => row.status === 'supported' || row.status === 'experimental')?.versionName
+    || rows.find((row) => row.status !== 'blocked')?.versionName
+    || baselineRecommendedVersion;
+}
+
+export function buildCompatibilityMatrix(
+  profile: HardwareProfile,
+  options: CompatibilityMatrixOptions = {},
+): CompatibilityMatrix {
+  const planningMode = options.planningMode ?? 'safe';
+  const baseline = checkCompatibility(profile, { planningMode });
   const rows = MACOS_VERSIONS.map((version) => {
     const report = checkCompatibility({
       ...profile,
       targetOS: version.name,
-    });
+    }, { planningMode });
 
     return {
       versionId: version.id,
@@ -70,9 +97,14 @@ export function buildCompatibilityMatrix(profile: HardwareProfile): Compatibilit
       reportLevel: report.level,
     } satisfies CompatibilityMatrixRow;
   });
+  const recommendedVersion = choosePlanningRecommendation(rows, baseline.recommendedVersion, planningMode);
+
+  for (const row of rows) {
+    row.recommended = row.versionName === recommendedVersion;
+  }
 
   return {
     rows,
-    recommendedVersion: baseline.recommendedVersion,
+    recommendedVersion,
   };
 }

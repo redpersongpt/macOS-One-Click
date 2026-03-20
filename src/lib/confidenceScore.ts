@@ -4,10 +4,12 @@
 
 import type { HardwareProfile } from '../../electron/configGenerator';
 import type { CompatibilityReport } from '../../electron/compatibility';
+import type { ValidationResult } from '../../electron/configValidator';
 import type { GpuAssessment } from '../../electron/hackintoshRules';
 
 export interface ConfidenceResult {
   score: number;
+  label: 'High confidence' | 'Medium confidence' | 'Low confidence';
   explanation: string;
   factors: ConfidenceFactor[];
 }
@@ -46,6 +48,7 @@ export function computeConfidenceScore(
   profile: HardwareProfile,
   compat: CompatibilityReport | null,
   gpuAssessments: GpuAssessment[],
+  validationResult?: ValidationResult | null,
 ): ConfidenceResult {
   const factors: ConfidenceFactor[] = [];
   let base = 50; // Start at 50
@@ -128,29 +131,86 @@ export function computeConfidenceScore(
     if (compat.level === 'supported') {
       factors.push({ name: 'Compatibility', impact: 5, detail: 'Compatibility analysis found no issues.' });
       base += 5;
+    } else if (compat.level === 'experimental') {
+      factors.push({ name: 'Compatibility', impact: -8, detail: 'Compatibility analysis considers this build experimental. Expect older macOS ceilings or extra manual tuning.' });
+      base -= 8;
+    } else if (compat.level === 'risky') {
+      factors.push({ name: 'Compatibility', impact: -18, detail: 'Compatibility analysis considers this build risky. Community evidence exists, but manual fixes are likely.' });
+      base -= 18;
     } else if (compat.level === 'blocked') {
       factors.push({ name: 'Compatibility', impact: -30, detail: 'Compatibility analysis found blocking issues.' });
       base -= 30;
-    } else if (compat.warnings.length > 0) {
-      const penalty = Math.min(compat.warnings.length * 3, 15);
+    }
+
+    if (compat.warnings.length > 0) {
+      const penalty = Math.min(compat.warnings.length * 2, 10);
       factors.push({ name: 'Compatibility Warnings', impact: -penalty, detail: `${compat.warnings.length} warning(s) from compatibility analysis.` });
       base -= penalty;
+    }
+
+    if (compat.communityEvidence) {
+      const evidenceImpact = compat.communityEvidence.signal === 'strong'
+        ? 10
+        : compat.communityEvidence.signal === 'moderate'
+          ? 6
+          : 2;
+      factors.push({
+        name: 'Community Evidence',
+        impact: evidenceImpact,
+        detail: `${compat.communityEvidence.matchedCount} documented SUCCESS post(s) matched similar hardware, with a ${compat.communityEvidence.matchLevel} community match and ${compat.communityEvidence.bestMatchConfidence} source confidence.`,
+      });
+      base += evidenceImpact;
+
+      if (compat.communityEvidence.highestReportedVersionNumeric != null) {
+        const targetVersion = Number.parseFloat((profile.targetOS.match(/(\d+(?:\.\d+)?)/)?.[1]) ?? '15');
+        const versionImpact = targetVersion <= compat.communityEvidence.highestReportedVersionNumeric ? 5 : -8;
+        factors.push({
+          name: 'macOS Version Match',
+          impact: versionImpact,
+          detail: targetVersion <= compat.communityEvidence.highestReportedVersionNumeric
+            ? `Selected target stays within the strongest community-reported ceiling (${compat.communityEvidence.highestReportedVersion}).`
+            : `Selected target is newer than the strongest community-reported ceiling (${compat.communityEvidence.highestReportedVersion}).`,
+        });
+        base += versionImpact;
+      }
+    }
+  }
+
+  if (validationResult) {
+    if (validationResult.overall === 'pass') {
+      factors.push({
+        name: 'Validation Result',
+        impact: 10,
+        detail: 'EFI validation passed without warnings.',
+      });
+      base += 10;
+    } else if (validationResult.overall === 'warning') {
+      factors.push({
+        name: 'Validation Result',
+        impact: -6,
+        detail: `${validationResult.issues.length} validation warning(s) remain to be reviewed.`,
+      });
+      base -= 6;
+    } else {
+      factors.push({
+        name: 'Validation Result',
+        impact: -20,
+        detail: 'Validation found blocking issues in the generated EFI.',
+      });
+      base -= 20;
     }
   }
 
   // Clamp to 0–100
   const score = Math.max(0, Math.min(100, base));
+  const label = score >= 70 ? 'High confidence' : score >= 45 ? 'Medium confidence' : 'Low confidence';
 
   // Build explanation
-  const explanation = score >= 80
-    ? 'High confidence — well-supported hardware with a proven configuration path.'
-    : score >= 60
-    ? 'Moderate confidence — supported hardware with some areas that may need manual attention.'
-    : score >= 40
-    ? 'Low-moderate confidence — this setup will likely work but has known limitations or unusual hardware.'
-    : score >= 20
-    ? 'Low confidence — significant challenges expected. Prepare for troubleshooting.'
-    : 'Very low confidence — this hardware combination has fundamental compatibility issues.';
+  const explanation = label === 'High confidence'
+    ? 'High confidence — the hardware path, community evidence, and current validation state line up well.'
+    : label === 'Medium confidence'
+      ? 'Medium confidence — the build is plausible, but some hardware or validation edges still need manual attention.'
+      : 'Low confidence — expect manual fixes and iterative troubleshooting before this path becomes reliable.';
 
-  return { score, explanation, factors };
+  return { score, label, explanation, factors };
 }

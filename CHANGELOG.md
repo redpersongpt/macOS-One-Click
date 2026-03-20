@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.3.0 - 2026-03-20
+
+- Added guided fix suggestions, community match levels, likely failure points, and decision-trace context for Experimental and Risky Hackintosh paths.
+- Added Safe Mode and Exploratory Mode planning surfaces so advanced users can stretch community-proven hardware paths without weakening destructive safety.
+- Kept destructive write protection unchanged: flash token safety, live disk identity checks, EFI validation, BIOS readiness, backup policy, and confirmation flow are all intact.
+- Preserved the packaged startup-path fix so published Windows and Linux builds do not regress into a black-screen launch failure.
+
 ## 2.2.2 - 2026-03-20
 
 - Fixed the packaged startup path so released apps load the renderer bundle from the correct `dist/index.html` location instead of opening to a black screen.

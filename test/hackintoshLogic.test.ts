@@ -185,6 +185,73 @@ describe('Hackintosh compatibility logic', () => {
     assert.ok(report.errors.some(error => /Choose macOS High Sierra 10\.13/i.test(error)));
   });
 
+  test('older ThinkPad-class Haswell laptops stay experimental instead of blocked', () => {
+    const report = checkCompatibility(makeProfile({
+      cpu: 'Intel Core i5-4300M',
+      generation: 'Haswell',
+      isLaptop: true,
+      gpu: 'Intel HD Graphics 4600',
+      gpuDevices: [{ name: 'Intel HD Graphics 4600', vendorName: 'Intel' }],
+      motherboard: 'ThinkPad T440p',
+      targetOS: 'macOS Monterey 12',
+      smbios: 'MacBookPro11,1',
+    }));
+
+    assert.equal(report.level, 'experimental');
+    assert.equal(report.isCompatible, true);
+    assert.equal(report.errors.length, 0);
+    assert.equal(report.recommendedVersion, 'macOS Big Sur 11');
+    assert.ok(report.eligibleVersions.some(version => version.id === '12'));
+    assert.ok(report.communityEvidence);
+    assert.equal(report.communityEvidence?.highestReportedVersion, 'macOS Big Sur 11');
+    assert.equal(report.communityEvidence?.matchLevel, 'strong');
+    assert.ok(report.mostLikelyFailurePoints.some((point) => /sleep|audio|trackpad|input/i.test(point.title)));
+  });
+
+  test('community-proven but scan-uncertain legacy laptops stay risky instead of hard blocked', () => {
+    const report = checkCompatibility(makeProfile({
+      cpu: 'Intel Core i5 M560',
+      generation: 'Unknown',
+      isLaptop: true,
+      gpu: 'Intel HD Graphics',
+      gpuDevices: [{ name: 'Intel HD Graphics', vendorName: 'Intel' }],
+      motherboard: 'ThinkPad X201',
+      targetOS: 'macOS Big Sur 11',
+      scanConfidence: 'medium',
+      smbios: 'MacBookPro6,2',
+    }));
+
+    assert.equal(report.level, 'risky');
+    assert.equal(report.isCompatible, true);
+    assert.equal(report.errors.length, 0);
+    assert.equal(report.recommendedVersion, 'macOS Big Sur 11');
+    assert.ok(report.warnings.some(warning => /display path/i.test(warning)));
+    assert.ok(report.communityEvidence?.matchedCount);
+    assert.ok(report.mostLikelyFailurePoints.length > 0);
+  });
+
+  test('exploratory mode adds more aggressive next actions without changing the compatibility level', () => {
+    const profile = makeProfile({
+      cpu: 'Intel Core i5-4300M',
+      generation: 'Haswell',
+      isLaptop: true,
+      gpu: 'Intel HD Graphics 4600',
+      gpuDevices: [{ name: 'Intel HD Graphics 4600', vendorName: 'Intel' }],
+      motherboard: 'ThinkPad T440p',
+      targetOS: 'macOS Monterey 12',
+      smbios: 'MacBookPro11,1',
+      kexts: ['Lilu', 'WhateverGreen', 'AppleALC', 'VoodooPS2Controller'],
+      bootArgs: '-v alcid=11',
+    });
+
+    const safeReport = checkCompatibility(profile, { planningMode: 'safe' });
+    const exploratoryReport = checkCompatibility(profile, { planningMode: 'exploratory' });
+
+    assert.equal(exploratoryReport.level, safeReport.level);
+    assert.ok(exploratoryReport.nextActions.length >= safeReport.nextActions.length);
+    assert.ok(exploratoryReport.nextActions.some((action) => /one variable at a time|alternative laptop tuning/i.test(`${action.title} ${action.detail}`)));
+  });
+
   test('Intel GT1 / UHD 610-only systems are rejected', () => {
     const report = checkCompatibility(makeProfile({
       gpu: 'Intel UHD Graphics 610',

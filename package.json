@@ -1,7 +1,7 @@
 {
   "name": "macos-one-click",
   "private": true,
-  "version": "2.2.2",
+  "version": "2.3.0",
   "description": "macOS One-Click Deployment Utility",
   "author": "macOS-One-Click contributors",
   "main": "dist-electron/electron/main.js",
@@ -33,13 +33,17 @@
       {
         "from": "electron/assets/kexts",
         "to": "kexts",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "mac": {
       "target": "dmg",
       "icon": "assets/icons/icon.icns",
-      "signIgnore": ["kexts/.*"]
+      "signIgnore": [
+        "kexts/.*"
+      ]
     },
     "win": {
       "target": "nsis",

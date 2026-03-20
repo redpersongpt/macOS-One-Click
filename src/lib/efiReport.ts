@@ -3,6 +3,7 @@
 // made during EFI generation. This is the "senior Hackintosh expert" feature.
 
 import type { HardwareProfile } from '../../electron/configGenerator';
+import type { ValidationResult } from '../../electron/configValidator';
 import { getSMBIOSForProfile, getRequiredResources } from '../../electron/configGenerator';
 import {
   classifyGpu,
@@ -12,8 +13,15 @@ import {
   type GpuAssessment,
 } from '../../electron/hackintoshRules.js';
 import { KEXT_REGISTRY, type KextEntry } from '../data/kextRegistry';
-import type { CompatibilityReport } from '../../electron/compatibility';
+import type {
+  CompatibilityFailurePoint,
+  CompatibilityGuidanceConfidence,
+  CompatibilityGuidanceSource,
+  CompatibilityNextAction,
+  CompatibilityReport,
+} from '../../electron/compatibility';
 import { computeConfidenceScore } from './confidenceScore';
+import { getRelevantIssues } from '../data/communityKnowledge';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -51,13 +59,25 @@ export interface KnownLimitation {
   workaround?: string;
 }
 
+export interface EfiDecision {
+  label: string;
+  selected: string;
+  reason: string;
+  source: CompatibilityGuidanceSource;
+  confidence: CompatibilityGuidanceConfidence;
+}
+
 export interface EfiReport {
   hardware: EfiReportSection;
   smbios: { selected: string; reasoning: string; alternatives: string[] };
   kexts: KextExplanation[];
   bootArgs: BootArgExplanation[];
   limitations: KnownLimitation[];
+  decisions: EfiDecision[];
+  nextActions: CompatibilityNextAction[];
+  failurePoints: CompatibilityFailurePoint[];
   confidenceScore: number;
+  confidenceLabel: 'High confidence' | 'Medium confidence' | 'Low confidence';
   confidenceExplanation: string;
   macOSCeiling: { version: string; reason: string } | null;
   generatedAt: string;
@@ -348,12 +368,164 @@ function getMacOSCeiling(gpuAssessments: GpuAssessment[]): { version: string; re
   };
 }
 
+function defaultDecisionConfidence(
+  compat: CompatibilityReport | null,
+  source: CompatibilityGuidanceSource,
+): CompatibilityGuidanceConfidence {
+  if (source === 'fallback') return 'low';
+  if (source === 'community') return compat?.level === 'risky' ? 'low' : 'medium';
+  if (compat?.level === 'risky') return 'medium';
+  return compat?.level === 'experimental' ? 'medium' : 'high';
+}
+
+function buildSmbiosDecision(profile: HardwareProfile, compat: CompatibilityReport | null): EfiDecision {
+  const usesCommunityRationale = !!compat?.communityEvidence && compat.level !== 'supported' && profile.isLaptop;
+  const source: CompatibilityGuidanceSource = usesCommunityRationale ? 'community' : compat?.level === 'risky' ? 'fallback' : 'rule';
+  const communityNote = usesCommunityRationale && compat?.communityEvidence?.highestReportedVersion
+    ? ` Similar laptops in the community most often succeed around ${compat.communityEvidence.highestReportedVersion}.`
+    : '';
+
+  return {
+    label: 'SMBIOS',
+    selected: profile.smbios,
+    reason: `${getSMBIOSReasoning(profile)}${communityNote}`,
+    source,
+    confidence: defaultDecisionConfidence(compat, source),
+  };
+}
+
+function buildKextDecision(
+  kext: KextExplanation,
+  profile: HardwareProfile,
+  compat: CompatibilityReport | null,
+): EfiDecision {
+  const lower = kext.name.toLowerCase();
+  const communityDriven = [
+    'voodoops2',
+    'voodoormi',
+    'nootrx',
+    'nootedred',
+    'airportitlwm',
+    'itlwm',
+    'intelbluetoothfirmware',
+    'bluetoolfixup',
+  ].some((pattern) => lower.includes(pattern));
+  const fallbackDriven = [
+    'applemcereporterdisabler',
+    'cputopologyrebuild',
+    'nvmefix',
+    'restrictevents',
+    'cpufriend',
+  ].some((pattern) => lower.includes(pattern));
+  const source: CompatibilityGuidanceSource = communityDriven
+    ? 'community'
+    : fallbackDriven
+      ? 'fallback'
+      : 'rule';
+
+  return {
+    label: `Kext · ${kext.name}`,
+    selected: kext.category,
+    reason: kext.reason,
+    source,
+    confidence: defaultDecisionConfidence(compat, source),
+  };
+}
+
+function buildBootArgDecision(
+  arg: BootArgExplanation,
+  compat: CompatibilityReport | null,
+): EfiDecision {
+  const lower = arg.arg.toLowerCase();
+  const source: CompatibilityGuidanceSource = (
+    lower.includes('wegnoegpu') ||
+    lower.includes('no_compat_check') ||
+    lower.includes('agdpmod=pikera') ||
+    lower.includes('revpatch=sbvmm')
+  )
+    ? 'fallback'
+    : (
+      lower.includes('alcid=') ||
+      lower.includes('unfairgva') ||
+      lower.includes('igfx')
+    )
+      ? 'community'
+      : 'rule';
+
+  return {
+    label: `Boot Arg · ${arg.arg}`,
+    selected: arg.impact,
+    reason: arg.purpose,
+    source,
+    confidence: defaultDecisionConfidence(compat, source),
+  };
+}
+
+function buildReportNextActions(
+  profile: HardwareProfile,
+  compat: CompatibilityReport | null,
+): CompatibilityNextAction[] {
+  const actions: CompatibilityNextAction[] = [...(compat?.nextActions ?? [])];
+  const seen = new Set(actions.map((action) => `${action.title}|${action.detail}`));
+  const addAction = (action: CompatibilityNextAction): void => {
+    const key = `${action.title}|${action.detail}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      actions.push(action);
+    }
+  };
+
+  for (const issue of getRelevantIssues({
+    architecture: profile.architecture,
+    generation: profile.generation,
+    gpu: profile.gpu,
+    isLaptop: profile.isLaptop,
+    kexts: profile.kexts,
+  })) {
+    addAction({
+      title: issue.title,
+      detail: issue.fix,
+      source: issue.source.toLowerCase().includes('dortania') ? 'rule' : 'community',
+      confidence: issue.severity === 'critical' ? 'high' : issue.severity === 'common_fix' ? 'medium' : 'low',
+    });
+  }
+
+  return actions.slice(0, 6);
+}
+
+function buildReportFailurePoints(
+  compat: CompatibilityReport | null,
+  validationResult?: ValidationResult | null,
+): CompatibilityFailurePoint[] {
+  const points: CompatibilityFailurePoint[] = [...(compat?.mostLikelyFailurePoints ?? [])];
+  const seen = new Set(points.map((point) => `${point.title}|${point.detail}`));
+  const addPoint = (point: CompatibilityFailurePoint): void => {
+    const key = `${point.title}|${point.detail}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      points.push(point);
+    }
+  };
+
+  for (const issue of validationResult?.issues ?? []) {
+    addPoint({
+      title: issue.component,
+      detail: issue.message,
+      likelihood: issue.severity === 'blocked' ? 'very likely' : 'likely',
+      source: 'rule',
+    });
+  }
+
+  return points.slice(0, 3);
+}
+
 // ── Main report generator ────────────────────────────────────────────────────
 
 export function generateEfiReport(
   profile: HardwareProfile,
   compat: CompatibilityReport | null,
   kextResults?: Array<{ name: string; version: string; source?: string }>,
+  validationResult?: ValidationResult | null,
 ): EfiReport {
   const gpuDevices = getProfileGpuDevices(profile);
   const gpuAssessments = gpuDevices.map(classifyGpu);
@@ -395,9 +567,16 @@ export function generateEfiReport(
 
   // Limitations
   const limitations = detectLimitations(profile, gpuAssessments);
+  const decisions: EfiDecision[] = [
+    buildSmbiosDecision(profile, compat),
+    ...kextExplanations.map((kext) => buildKextDecision(kext, profile, compat)),
+    ...bootArgs.map((arg) => buildBootArgDecision(arg, compat)),
+  ];
+  const nextActions = buildReportNextActions(profile, compat);
+  const failurePoints = buildReportFailurePoints(compat, validationResult);
 
   // Confidence
-  const { score, explanation } = computeConfidenceScore(profile, compat, gpuAssessments);
+  const { score, label, explanation } = computeConfidenceScore(profile, compat, gpuAssessments, validationResult);
 
   // macOS ceiling
   const macOSCeiling = getMacOSCeiling(gpuAssessments);
@@ -408,7 +587,11 @@ export function generateEfiReport(
     kexts: kextExplanations,
     bootArgs,
     limitations,
+    decisions,
+    nextActions,
+    failurePoints,
     confidenceScore: score,
+    confidenceLabel: label,
     confidenceExplanation: explanation,
     macOSCeiling,
     generatedAt: new Date().toISOString(),

@@ -59,6 +59,25 @@ describe('compatibility matrix', () => {
     assert.equal(matrix.rows.filter((row) => row.recommended).length, report.recommendedVersion ? 1 : 0);
   });
 
+  test('uses a more conservative recommended row in safe mode than exploratory mode', () => {
+    const profile = makeProfile({
+      cpu: 'Intel Core i5-4300M',
+      generation: 'Haswell',
+      isLaptop: true,
+      gpu: 'Intel HD Graphics 4600',
+      gpuDevices: [{ name: 'Intel HD Graphics 4600', vendorName: 'Intel' }],
+      motherboard: 'ThinkPad T440p',
+      targetOS: 'macOS Monterey 12',
+      smbios: 'MacBookPro11,1',
+    });
+
+    const safeMatrix = buildCompatibilityMatrix(profile, { planningMode: 'safe' });
+    const exploratoryMatrix = buildCompatibilityMatrix(profile, { planningMode: 'exploratory' });
+
+    assert.equal(safeMatrix.recommendedVersion, 'macOS Big Sur 11');
+    assert.equal(exploratoryMatrix.recommendedVersion, 'macOS Monterey 12');
+  });
+
   test('preserves blocked version ceilings from existing compatibility logic', () => {
     const profile = makeProfile({
       cpu: 'Intel Core i7-4770',
@@ -79,7 +98,7 @@ describe('compatibility matrix', () => {
     assert.equal(sonomaRow?.status, 'blocked');
   });
 
-  test('renders supported, partial, and blocked rows with reasons', () => {
+  test('renders supported, experimental, risky, and blocked rows with reasons', () => {
     const rows: CompatibilityMatrixRow[] = [
       {
         versionId: '15',
@@ -96,10 +115,20 @@ describe('compatibility matrix', () => {
         versionName: 'macOS Sonoma 14',
         icon: 'sonoma',
         numeric: 14,
-        status: 'partial',
-        reason: 'Manual review is still required.',
+        status: 'experimental',
+        reason: 'Older but still community-proven laptop path.',
         recommended: false,
-        reportLevel: 'supported_with_warnings',
+        reportLevel: 'experimental',
+      },
+      {
+        versionId: '13',
+        versionName: 'macOS Ventura 13',
+        icon: 'ventura',
+        numeric: 13,
+        status: 'risky',
+        reason: 'Boot path exists, but manual fixes are likely.',
+        recommended: false,
+        reportLevel: 'risky',
       },
       {
         versionId: '26',
@@ -117,16 +146,42 @@ describe('compatibility matrix', () => {
       React.createElement(CompatibilityMatrix, {
         rows,
         selectedVersion: 'macOS Sonoma 14',
+        planningMode: 'safe',
       }),
     );
 
     assert.match(html, /Supported/);
-    assert.match(html, /Partial/);
+    assert.match(html, /Experimental/);
+    assert.match(html, /Risky/);
     assert.match(html, /Blocked/);
     assert.match(html, /Strong canonical target\./);
-    assert.match(html, /Manual review is still required\./);
+    assert.match(html, /Older but still community-proven laptop path\./);
+    assert.match(html, /Boot path exists, but manual fixes are likely\./);
     assert.match(html, /Selected target exceeds the supported GPU ceiling\./);
-    assert.match(html, /Recommended/);
+    assert.match(html, /Safe Start/);
     assert.match(html, /Selected/);
+    assert.match(html, /Advanced Only/);
+  });
+
+  test('renders exploratory candidate language in exploratory mode', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(CompatibilityMatrix, {
+        rows: [{
+          versionId: '12',
+          versionName: 'macOS Monterey 12',
+          icon: 'monterey',
+          numeric: 12,
+          status: 'risky',
+          reason: 'Manual fixes are likely.',
+          recommended: true,
+          reportLevel: 'risky',
+        }],
+        selectedVersion: 'macOS Monterey 12',
+        planningMode: 'exploratory',
+      }),
+    );
+
+    assert.match(html, /Exploratory Start/);
+    assert.match(html, /Exploratory Candidate/);
   });
 });

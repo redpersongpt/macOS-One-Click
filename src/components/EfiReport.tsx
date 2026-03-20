@@ -6,7 +6,7 @@ import {
   ChevronDown, ChevronRight, Shield, Cpu, HardDrive, Zap, AlertTriangle,
   CheckCircle, Info, Lock, Wifi, Monitor, Terminal,
 } from 'lucide-react';
-import type { EfiReport, KextExplanation, BootArgExplanation, KnownLimitation } from '../lib/efiReport';
+import type { EfiReport, EfiDecision, KextExplanation, BootArgExplanation, KnownLimitation } from '../lib/efiReport';
 import type { ConfidenceFactor } from '../lib/confidenceScore';
 
 interface Props {
@@ -20,7 +20,7 @@ function ConfidenceRing({ score }: { score: number }) {
   const offset = circumference - (score / 100) * circumference;
   const color = score >= 75 ? '#34d399' : score >= 50 ? '#fbbf24' : score >= 25 ? '#f97316' : '#ef4444';
   const glowColor = score >= 75 ? 'rgba(52,211,153,0.15)' : score >= 50 ? 'rgba(251,191,36,0.15)' : score >= 25 ? 'rgba(249,115,22,0.15)' : 'rgba(239,68,68,0.15)';
-  const grade = score >= 85 ? 'Excellent' : score >= 70 ? 'Good' : score >= 50 ? 'Fair' : score >= 25 ? 'Risky' : 'Critical';
+  const grade = score >= 70 ? 'High' : score >= 45 ? 'Medium' : 'Low';
 
   return (
     <div className="relative w-24 h-24 flex-shrink-0">
@@ -39,6 +39,65 @@ function ConfidenceRing({ score }: { score: number }) {
         <span className="text-2xl font-black text-white">{score}</span>
         <span className="text-[7px] font-bold uppercase tracking-widest" style={{ color }}>{grade}</span>
       </div>
+    </div>
+  );
+}
+
+function DecisionRow({ decision }: { decision: EfiDecision; key?: string }) {
+  const sourceClass = decision.source === 'rule'
+    ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300'
+    : decision.source === 'community'
+      ? 'border-sky-500/20 bg-sky-500/10 text-sky-300'
+      : 'border-amber-500/20 bg-amber-500/10 text-amber-300';
+
+  const confidenceClass = decision.confidence === 'high'
+    ? 'text-emerald-300'
+    : decision.confidence === 'medium'
+      ? 'text-amber-300'
+      : 'text-red-300';
+
+  return (
+    <div className="border-b border-white/[0.03] last:border-0 px-5 py-3 space-y-1.5">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-white/80">{decision.label}</div>
+          <div className="text-[11px] text-white/35">{decision.selected}</div>
+        </div>
+        <div className="flex items-center gap-2 text-[9px] uppercase tracking-widest">
+          <span className={`px-2 py-0.5 rounded-md border font-bold ${sourceClass}`}>
+            {decision.source}
+          </span>
+          <span className={`font-bold ${confidenceClass}`}>
+            {decision.confidence}
+          </span>
+        </div>
+      </div>
+      <div className="text-xs text-white/45 leading-relaxed">
+        {decision.reason}
+      </div>
+    </div>
+  );
+}
+
+function NextActionRow({ action }: { action: EfiReport['nextActions'][number]; key?: string }) {
+  const sourceClass = action.source === 'rule'
+    ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300'
+    : action.source === 'community'
+      ? 'border-sky-500/20 bg-sky-500/10 text-sky-300'
+      : 'border-amber-500/20 bg-amber-500/10 text-amber-300';
+
+  return (
+    <div className="border-b border-white/[0.03] last:border-0 px-5 py-3 space-y-1.5">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-sm font-semibold text-white/80">{action.title}</div>
+        <div className="flex items-center gap-2 text-[9px] uppercase tracking-widest">
+          <span className={`px-2 py-0.5 rounded-md border font-bold ${sourceClass}`}>
+            {action.source}
+          </span>
+          <span className="text-white/35 font-bold">{action.confidence}</span>
+        </div>
+      </div>
+      <div className="text-xs text-white/45 leading-relaxed">{action.detail}</div>
     </div>
   );
 }
@@ -175,9 +234,9 @@ export default function EfiReportPanel({ report }: Props) {
         <ConfidenceRing score={report.confidenceScore} />
         <div className="flex-1 min-w-0">
           <div className="text-[9px] font-bold text-white/20 uppercase tracking-widest mb-1">Build Assessment</div>
-          <h3 className="text-lg font-bold text-white mb-1.5">{report.confidenceExplanation}</h3>
+          <h3 className="text-lg font-bold text-white mb-1.5">{report.confidenceLabel}</h3>
           <p className="text-xs text-white/35 leading-relaxed">
-            Based on CPU maturity, GPU driver support, kext complexity, and known hardware quirks.
+            {report.confidenceExplanation}
           </p>
           {report.macOSCeiling && (
             <div className="mt-2.5 flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-amber-500/8 border border-amber-500/15 w-fit">
@@ -221,6 +280,32 @@ export default function EfiReportPanel({ report }: Props) {
           )}
         </div>
       </Section>
+
+      {report.nextActions.length > 0 && (
+        <Section title={`What To Try Next (${report.nextActions.length})`} icon={CheckCircle} defaultOpen>
+          {report.nextActions.map((action) => <NextActionRow key={`${action.title}-${action.detail}`} action={action} />)}
+        </Section>
+      )}
+
+      {report.failurePoints.length > 0 && (
+        <Section title={`Most Likely Failure Points (${report.failurePoints.length})`} icon={AlertTriangle} defaultOpen>
+          {report.failurePoints.map((point) => (
+            <div key={`${point.title}-${point.detail}`} className="border-b border-white/[0.03] last:border-0 px-5 py-3 space-y-1.5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-semibold text-white/80">{point.title}</div>
+                <div className="text-[9px] uppercase tracking-widest text-white/35">{point.likelihood}</div>
+              </div>
+              <div className="text-xs text-white/45 leading-relaxed">{point.detail}</div>
+            </div>
+          ))}
+        </Section>
+      )}
+
+      {report.decisions.length > 0 && (
+        <Section title={`Decision Trace (${report.decisions.length})`} icon={Shield}>
+          {report.decisions.map((decision) => <DecisionRow key={`${decision.label}-${decision.selected}`} decision={decision} />)}
+        </Section>
+      )}
 
       {/* ── Kexts ──────────────────────────────────────────────────── */}
       <Section title={`Kernel Extensions (${report.kexts.length})`} icon={Zap}>

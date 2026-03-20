@@ -1,4 +1,8 @@
-import { checkCompatibility, type CompatibilityReport } from '../../electron/compatibility.js';
+import {
+  checkCompatibility,
+  type CompatibilityPlanningMode,
+  type CompatibilityReport,
+} from '../../electron/compatibility.js';
 import { getBIOSSettings, type BIOSConfig, type HardwareProfile } from '../../electron/configGenerator.js';
 import type { ValidationResult } from '../../electron/configValidator.js';
 
@@ -18,8 +22,9 @@ export function isCompatibilityBlocked(report: CompatibilityReport | null | unde
 export function restoreFlowDecision(
   profile: HardwareProfile,
   requestedStep: string,
+  planningMode: CompatibilityPlanningMode = 'safe',
 ): RestoreFlowDecision {
-  const compatibility = checkCompatibility(profile);
+  const compatibility = checkCompatibility(profile, { planningMode });
   const nextProfile: HardwareProfile = { ...profile, strategy: compatibility.strategy };
   const blocked = isCompatibilityBlocked(compatibility);
 
@@ -44,9 +49,10 @@ export interface TargetSelectionDecision {
 export function targetSelectionDecision(
   profile: HardwareProfile,
   targetOS: string,
+  planningMode: CompatibilityPlanningMode = 'safe',
 ): TargetSelectionDecision {
   const nextProfile: HardwareProfile = { ...profile, targetOS };
-  const compatibility = checkCompatibility(nextProfile);
+  const compatibility = checkCompatibility(nextProfile, { planningMode });
   nextProfile.strategy = compatibility.strategy;
 
   return {

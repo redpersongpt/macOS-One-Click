@@ -2,7 +2,10 @@ import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { AlertTriangle, CheckCircle, XCircle, Info, ChevronDown, ChevronRight, Eye, Download, Save, Upload, FlaskConical } from 'lucide-react';
 import { HardwareProfile } from '../../../electron/configGenerator';
-import { CompatibilityReport } from '../../../electron/compatibility';
+import type {
+  CompatibilityPlanningMode,
+  CompatibilityReport,
+} from '../../../electron/compatibility';
 import {
   getBestSupportedGpuPath,
   getProfileGpuDevices,
@@ -16,6 +19,7 @@ import type { ResourcePlan } from '../../../electron/resourcePlanner';
 import type { SafeSimulationResult } from '../../../electron/safeSimulation';
 import CompatibilitySummary from '../CompatibilitySummary';
 import CompatibilityMatrixView from '../CompatibilityMatrix';
+import PlanningModeToggle from '../PlanningModeToggle';
 import ResourcePlanPanel from '../ResourcePlanPanel';
 import SimulationPreview from '../SimulationPreview';
 
@@ -23,6 +27,8 @@ interface ReportStepProps {
   profile: HardwareProfile;
   report: CompatibilityReport;
   matrix: CompatibilityMatrix;
+  planningMode: CompatibilityPlanningMode;
+  onPlanningModeChange: (mode: CompatibilityPlanningMode) => void;
   interpretation: HardwareInterpretation | null;
   profileArtifact: HardwareProfileArtifact | null;
   resourcePlan: ResourcePlan | null;
@@ -86,6 +92,8 @@ export default function ReportStep({
   profile,
   report,
   matrix,
+  planningMode,
+  onPlanningModeChange,
   interpretation,
   profileArtifact,
   resourcePlan,
@@ -115,17 +123,21 @@ export default function ReportStep({
       ? `${bestDisplayPath.name} as the display path`
       : 'no supported display path';
     const osTarget = profile.targetOS;
+    const fallbackVersion = report.recommendedVersion || report.eligibleVersions[0]?.name;
 
     if (report.level === 'blocked') {
-      return `${cpuPart} with ${gpuPart} — this hardware cannot run ${osTarget}.`;
+      if (fallbackVersion) {
+        return `${cpuPart} with ${gpuPart} — ${osTarget} is above the viable ceiling for this path. Try ${fallbackVersion} or older instead.`;
+      }
+      return `${cpuPart} with ${gpuPart} — this hardware remains blocked for Hackintosh planning.`;
     }
     if (report.level === 'supported') {
       return `${cpuPart} with ${gpuPart} targeting ${osTarget} — this is a well-proven configuration.`;
     }
-    if (report.level === 'supported_with_warnings') {
-      return `${cpuPart} with ${gpuPart} targeting ${osTarget} — supported, but review the warnings below.`;
+    if (report.level === 'experimental') {
+      return `${cpuPart} with ${gpuPart} targeting ${osTarget} — viable, but expect an older or tweak-heavy community path rather than a clean canonical build.`;
     }
-    return `${cpuPart} with ${gpuPart} targeting ${osTarget} — partial support. Manual configuration may be needed.`;
+    return `${cpuPart} with ${gpuPart} targeting ${osTarget} — risky community path. Planning can continue, but manual fixes are likely.`;
   })();
 
   const planningStatusCopy = planningProfileContext === 'imported_artifact'
@@ -215,6 +227,10 @@ export default function ReportStep({
         )}
       </div>
 
+      <div className="flex-shrink-0">
+        <PlanningModeToggle mode={planningMode} onChange={onPlanningModeChange} />
+      </div>
+
       {/* Unified Compatibility Summary (Task 4) */}
       <div className="flex-shrink-0">
         <CompatibilitySummary report={report} />
@@ -227,6 +243,7 @@ export default function ReportStep({
         <CompatibilityMatrixView
           rows={matrix.rows}
           selectedVersion={profile.targetOS}
+          planningMode={planningMode}
         />
       </div>
 
@@ -236,7 +253,7 @@ export default function ReportStep({
 
       {simulationResult && (
         <div className="flex-shrink-0">
-          <SimulationPreview result={simulationResult} />
+          <SimulationPreview result={simulationResult} report={report} planningMode={planningMode} />
         </div>
       )}
 

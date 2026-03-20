@@ -7,7 +7,11 @@ import {
 } from 'lucide-react';
 import BrandIcon from './components/BrandIcon';
 import { getBIOSSettings, getRequiredResources, getSMBIOSForProfile, type HardwareProfile, type BIOSConfig } from '../electron/configGenerator';
-import { checkCompatibility, type CompatibilityReport } from '../electron/compatibility';
+import {
+  checkCompatibility,
+  type CompatibilityPlanningMode,
+  type CompatibilityReport,
+} from '../electron/compatibility';
 import { buildCompatibilityMatrix } from '../electron/compatibilityMatrix';
 import type {
   BiosOrchestratorState,
@@ -283,6 +287,7 @@ export default function App() {
   const [resourcePlan, setResourcePlan] = useState<ResourcePlan | null>(null);
   const [safeSimulationResult, setSafeSimulationResult] = useState<SafeSimulationResult | null>(null);
   const [simulationRunning, setSimulationRunning] = useState(false);
+  const [planningMode, setPlanningMode] = useState<CompatibilityPlanningMode>('safe');
 
   // ── Debug Overlay ──────────────────────────────────────────────
   const [debugOpen, setDebugOpen] = useState(false);
@@ -314,8 +319,8 @@ export default function App() {
     [biosFlowState, buildReady, compatibilityBlocked, efiPath, profile, step, validationBlocked],
   );
   const compatibilityMatrix = useMemo(
-    () => (profile ? buildCompatibilityMatrix(profile) : null),
-    [profile],
+    () => (profile ? buildCompatibilityMatrix(profile, { planningMode }) : null),
+    [planningMode, profile],
   );
   const localBuildGuard = useMemo(
     () => evaluateBuildGuard({
@@ -336,6 +341,25 @@ export default function App() {
     [biosFlowState, compatibilityBlocked, efiPath, releaseFlowState, validationBlocked],
   );
   const postBuildReady = !compatibilityBlocked && biosReady && buildReady && !!efiPath && !validationBlocked;
+
+  useEffect(() => {
+    if (!profile) return;
+    const nextCompat = checkCompatibility(profile, { planningMode });
+    setCompat(nextCompat);
+    setProfile((currentProfile) => {
+      if (!currentProfile || currentProfile.strategy === nextCompat.strategy) return currentProfile;
+      return { ...currentProfile, strategy: nextCompat.strategy };
+    });
+  }, [planningMode, profile]);
+
+  useEffect(() => {
+    if (!profile || !compat || !validationResult || !buildReady) return;
+    try {
+      setEfiReport(generateEfiReport(profile, compat, kextResults, validationResult));
+    } catch (error) {
+      debugWarn('[efi-report] Failed to refresh report after planning mode change:', error);
+    }
+  }, [buildReady, compat, kextResults, planningMode, profile, validationResult]);
 
   // ── Task Manager ────────────────────────────────────────────────
   const { tasks, activeTask, cancelTask } = useTaskManager();
@@ -474,7 +498,7 @@ export default function App() {
     activeProfile: HardwareProfile,
     options?: { surfaceError?: boolean },
   ): Promise<FlowGuardResult> => {
-    const activeCompat = checkCompatibility(activeProfile);
+    const activeCompat = checkCompatibility(activeProfile, { planningMode });
     setCompat(activeCompat);
 
     if (!hasLiveHardwareContext) {
@@ -505,7 +529,7 @@ export default function App() {
     activeEfiPath: string,
     options?: { surfaceError?: boolean; reasonSuffix?: string },
   ): Promise<{ guard: FlowGuardResult; validation: ValidationResult | null }> => {
-    const activeCompat = checkCompatibility(activeProfile);
+    const activeCompat = checkCompatibility(activeProfile, { planningMode });
     setCompat(activeCompat);
 
     if (!hasLiveHardwareContext) {
@@ -823,7 +847,7 @@ export default function App() {
     let restoredBiosReady = true;
     let restoredBuildReady = false;
     if (s && s.profile && s.currentStep && Date.now() - s.timestamp < 4 * 3600 * 1000) {
-      const restore = restoreFlowDecision(s.profile, s.currentStep);
+      const restore = restoreFlowDecision(s.profile, s.currentStep, planningMode);
       restoredCompatibilityBlocked = isCompatibilityBlocked(restore.compatibility);
       const latestArtifact = s.profileArtifactDigest
         ? await window.electron.getLatestHardwareProfile().catch(() => null)
@@ -919,7 +943,7 @@ export default function App() {
       if (fw.ok && fw.data) setFirmwareInfo(fw.data);
       setProgress(85);
       
-      const report = checkCompatibility(hw);
+      const report = checkCompatibility(hw, { planningMode });
       // Inject strategy into profile for config generation
       hw.strategy = report.strategy;
       
@@ -954,7 +978,7 @@ export default function App() {
     setRecovDmgDest(null);
     setRecovClDest(null);
     const nextProfile = { ...artifact.profile };
-    const nextCompat = checkCompatibility(nextProfile);
+    const nextCompat = checkCompatibility(nextProfile, { planningMode });
     nextProfile.strategy = nextCompat.strategy;
     setCompat(nextCompat);
     setProfile(nextProfile);
@@ -1163,7 +1187,7 @@ export default function App() {
 
       // Generate EFI Intelligence Report + Community Knowledge
       try {
-        const report = generateEfiReport(profile, compat, fetchedKextResults);
+        const report = generateEfiReport(profile, compat, fetchedKextResults, validation);
         setEfiReport(report);
         const issues = getRelevantIssues({
           architecture: profile.architecture,
@@ -1862,9 +1886,9 @@ export default function App() {
                 {/* VERSION SELECT */}
                 {step === 'version-select' && compat && (
                   <motion.div key="ver" initial={stepEnter} animate={stepActive} exit={stepExit} transition={STEP_TRANSITION}>
-                    <VersionStep report={compat} matrix={compatibilityMatrix ?? buildCompatibilityMatrix(profile!)} selectedVersion={profile?.targetOS ?? compat.recommendedVersion} onSelect={v => {
+                    <VersionStep report={compat} matrix={compatibilityMatrix ?? buildCompatibilityMatrix(profile!, { planningMode })} selectedVersion={profile?.targetOS ?? compat.recommendedVersion} planningMode={planningMode} onPlanningModeChange={setPlanningMode} onSelect={v => {
                       if (!profile) return;
-                      const selection = targetSelectionDecision(profile, v);
+                      const selection = targetSelectionDecision(profile, v, planningMode);
                       setProfile(selection.profile);
                       setCompat(selection.compatibility);
                       setBiosConf(selection.biosConfig);
@@ -1881,7 +1905,9 @@ export default function App() {
                     <ReportStep
                       profile={profile}
                       report={compat}
-                      matrix={compatibilityMatrix ?? buildCompatibilityMatrix(profile)}
+                      matrix={compatibilityMatrix ?? buildCompatibilityMatrix(profile, { planningMode })}
+                      planningMode={planningMode}
+                      onPlanningModeChange={setPlanningMode}
                       interpretation={hwInterpretation}
                       profileArtifact={profileArtifact}
                       resourcePlan={resourcePlan}
@@ -2131,7 +2157,7 @@ export default function App() {
                     {/* System summary line */}
                     {efiReport && profile && (
                       <p className="mt-6 text-xs text-white/40 font-medium tracking-wide">
-                        {profile.generation} {profile.cpu.split(/\s+/).find(w => /i[3579]|ryzen|xeon|threadripper/i.test(w)) ?? ''} · {efiReport.hardware.items.find(i => i.label === 'Graphics')?.value.split(/\s+/).slice(0, 3).join(' ') ?? profile.gpu.split(/\s+/).slice(0, 3).join(' ')} · {profile.targetOS.replace('macOS ', '')} target · {efiReport.confidenceScore >= 85 ? 'Excellent' : efiReport.confidenceScore >= 70 ? 'High' : efiReport.confidenceScore >= 50 ? 'Moderate' : efiReport.confidenceScore >= 25 ? 'Low' : 'Critical'} confidence build
+                        {profile.generation} {profile.cpu.split(/\s+/).find(w => /i[3579]|ryzen|xeon|threadripper/i.test(w)) ?? ''} · {efiReport.hardware.items.find(i => i.label === 'Graphics')?.value.split(/\s+/).slice(0, 3).join(' ') ?? profile.gpu.split(/\s+/).slice(0, 3).join(' ')} · {profile.targetOS.replace('macOS ', '')} target · {efiReport.confidenceLabel} build
                       </p>
                     )}
 
@@ -2909,7 +2935,7 @@ export default function App() {
       <AnimatePresence>
         {debugOpen && (
           <DebugOverlay
-            appVersion="2.2.2"
+            appVersion="2.3.0"
             platform={platform}
             sessionId={debugSessionId}
             currentStep={step}

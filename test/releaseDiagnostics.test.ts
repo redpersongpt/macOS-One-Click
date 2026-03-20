@@ -25,6 +25,14 @@ function makeCompatibilityReport(): CompatibilityReport {
     warnings: ['Use a supported iGPU output path.'],
     errors: ['Selected target exceeds the supported GPU ceiling.'],
     minReqMet: true,
+    communityEvidence: null,
+    nextActions: [],
+    advisoryConfidence: {
+      score: 15,
+      label: 'Low confidence',
+      explanation: 'Blocked test fixture.',
+    },
+    mostLikelyFailurePoints: [],
   };
 }
 

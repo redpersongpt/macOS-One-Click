@@ -120,7 +120,7 @@ export async function runSafeSimulation(
 
   if (currentTarget?.status === 'blocked') {
     pushUnique(blockers, currentTarget.reason);
-  } else if (currentTarget?.status === 'partial') {
+  } else if (currentTarget?.status === 'experimental' || currentTarget?.status === 'risky') {
     pushUnique(warnings, currentTarget.reason);
   }
 

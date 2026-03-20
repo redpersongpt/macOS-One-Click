@@ -49,6 +49,14 @@ function makeState(overrides: Partial<StepGuardState> = {}): StepGuardState {
     warnings: [],
     errors: [],
     minReqMet: true,
+    communityEvidence: null,
+    nextActions: [],
+    advisoryConfidence: {
+      score: 90,
+      label: 'High confidence',
+      explanation: 'High confidence test fixture.',
+    },
+    mostLikelyFailurePoints: [],
   };
 
   return {

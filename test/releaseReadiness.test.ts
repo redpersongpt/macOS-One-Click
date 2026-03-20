@@ -140,7 +140,7 @@ describe('Release compatibility break flows', () => {
     }));
 
     assert.notEqual(report.level, 'supported');
-    assert.notEqual(report.level, 'supported_with_warnings');
+    assert.notEqual(report.level, 'experimental');
   });
 
   test('older Intel CPU targeting Ventura is downgraded and blocked at the too-new target', () => {

@@ -9,7 +9,7 @@ on:
       tag:
         description: 'Release tag (e.g. v2.1.3-beta)'
         required: true
-        default: 'v2.2.2'
+        default: 'v2.3.0'
 
 jobs:
   verify:
@@ -113,7 +113,8 @@ jobs:
 
             Notes:
             - The app's destructive flash safety, BIOS gating, EFI validation, and tokenized authorization are unchanged.
-            - This release fixes the Electron package entry so published Windows/Linux packages contain the correct main-process bootstrap.
+            - This release keeps the packaged startup-path fix in place so published Windows/Linux packages do not open to a black screen.
+            - Community evidence, guided fixes, and planning modes are advisory only and do not change destructive write authority.
           files: release-artifacts/**/*
           draft: false
           prerelease: false

@@ -1,11 +1,13 @@
 import React from 'react';
-import { AlertTriangle, CheckCircle, ChevronRight, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, CheckCircle, ChevronRight, Info, ShieldAlert } from 'lucide-react';
 import type { CompatibilityMatrixRow } from '../../electron/compatibilityMatrix';
+import type { CompatibilityPlanningMode } from '../../electron/compatibility';
 
 interface CompatibilityMatrixProps {
   rows: CompatibilityMatrixRow[];
   selectedVersion?: string | null;
   onSelect?: (version: string) => void;
+  planningMode?: CompatibilityPlanningMode;
 }
 
 const STATUS_STYLE: Record<CompatibilityMatrixRow['status'], {
@@ -22,8 +24,15 @@ const STATUS_STYLE: Record<CompatibilityMatrixRow['status'], {
     cardClassName: 'border-emerald-500/18 bg-emerald-500/6',
     disabled: false,
   },
-  partial: {
-    label: 'Partial',
+  experimental: {
+    label: 'Experimental',
+    icon: <Info className="w-3.5 h-3.5 text-sky-400" />,
+    badgeClassName: 'bg-sky-500/12 border-sky-500/20 text-sky-300',
+    cardClassName: 'border-sky-500/16 bg-sky-500/5',
+    disabled: false,
+  },
+  risky: {
+    label: 'Risky',
     icon: <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />,
     badgeClassName: 'bg-amber-500/12 border-amber-500/20 text-amber-300',
     cardClassName: 'border-amber-500/16 bg-amber-500/5',
@@ -42,6 +51,7 @@ export default function CompatibilityMatrix({
   rows,
   selectedVersion,
   onSelect,
+  planningMode = 'safe',
 }: CompatibilityMatrixProps) {
   return (
     <div className="space-y-3">
@@ -57,7 +67,16 @@ export default function CompatibilityMatrix({
                   <div className="text-sm font-bold text-white">{row.versionName}</div>
                   {row.recommended && (
                     <span className="px-2 py-0.5 rounded-full bg-blue-500/15 border border-blue-500/20 text-[9px] font-bold uppercase tracking-widest text-blue-300">
-                      Recommended
+                      {planningMode === 'safe' ? 'Safe Start' : 'Exploratory Start'}
+                    </span>
+                  )}
+                  {row.status === 'risky' && (
+                    <span className={`px-2 py-0.5 rounded-full border text-[9px] font-bold uppercase tracking-widest ${
+                      planningMode === 'exploratory'
+                        ? 'bg-amber-500/15 border-amber-500/25 text-amber-200'
+                        : 'bg-white/6 border-white/10 text-white/55'
+                    }`}>
+                      {planningMode === 'exploratory' ? 'Exploratory Candidate' : 'Advanced Only'}
                     </span>
                   )}
                   {selected && (

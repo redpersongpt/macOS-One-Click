@@ -1,15 +1,36 @@
 import React from 'react';
 import { AlertTriangle, CheckCircle, FlaskConical, ShieldAlert } from 'lucide-react';
 import type { SafeSimulationResult } from '../../electron/safeSimulation';
+import type {
+  CompatibilityPlanningMode,
+  CompatibilityReport,
+} from '../../electron/compatibility';
 
 interface SimulationPreviewProps {
   result: SafeSimulationResult;
+  report: CompatibilityReport;
+  planningMode: CompatibilityPlanningMode;
 }
 
-export default function SimulationPreview({ result }: SimulationPreviewProps) {
+export default function SimulationPreview({ result, report, planningMode }: SimulationPreviewProps) {
   const supportedCount = result.compatibilityMatrixSnapshot.filter((row) => row.status === 'supported').length;
-  const partialCount = result.compatibilityMatrixSnapshot.filter((row) => row.status === 'partial').length;
+  const experimentalCount = result.compatibilityMatrixSnapshot.filter((row) => row.status === 'experimental').length;
+  const riskyCount = result.compatibilityMatrixSnapshot.filter((row) => row.status === 'risky').length;
   const blockedCount = result.compatibilityMatrixSnapshot.filter((row) => row.status === 'blocked').length;
+  const likelyFailurePoints = [
+    ...report.mostLikelyFailurePoints.map((point) => ({
+      title: point.title,
+      detail: point.detail,
+      likelihood: point.likelihood,
+    })),
+    ...result.validationSummary.issues.slice(0, 3).map((issue) => ({
+      title: issue.component,
+      detail: issue.message,
+      likelihood: issue.severity === 'blocked' ? 'very likely' : 'likely',
+    })),
+  ].filter((point, index, points) => (
+    points.findIndex((candidate) => candidate.title === point.title && candidate.detail === point.detail) === index
+  )).slice(0, 3);
 
   return (
     <div className="rounded-2xl border border-blue-500/15 bg-blue-500/6 p-5 space-y-4">
@@ -42,8 +63,8 @@ export default function SimulationPreview({ result }: SimulationPreviewProps) {
         </div>
         <div className="rounded-xl border border-white/8 bg-white/4 p-3">
           <div className="text-white/45 uppercase tracking-widest text-[10px] font-bold mb-1">Compatibility Snapshot</div>
-          <div className="text-white/75">{supportedCount} supported, {partialCount} partial, {blockedCount} blocked</div>
-          <div className="text-white/45 mt-1">Recommended target remains derived from the existing compatibility engine.</div>
+          <div className="text-white/75">{supportedCount} supported, {experimentalCount} experimental, {riskyCount} risky, {blockedCount} blocked</div>
+          <div className="text-white/45 mt-1">{planningMode === 'safe' ? 'Safe Mode keeps the recommendation on the highest-confidence path.' : 'Exploratory Mode keeps risky non-blocked targets visible as stretch paths.'}</div>
         </div>
         <div className="rounded-xl border border-white/8 bg-white/4 p-3">
           <div className="text-white/45 uppercase tracking-widest text-[10px] font-bold mb-1">Recovery Readiness</div>
@@ -56,6 +77,24 @@ export default function SimulationPreview({ result }: SimulationPreviewProps) {
           <div className="text-white/45 mt-1">Simulation never downloads or writes disks. This is a planning manifest only.</div>
         </div>
       </div>
+
+      {likelyFailurePoints.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-rose-200/80">
+            <AlertTriangle className="w-3.5 h-3.5" />
+            Most Likely Failure Points
+          </div>
+          {likelyFailurePoints.map((point) => (
+            <div key={`${point.title}-${point.detail}`} className="rounded-xl border border-white/8 bg-white/4 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-xs font-semibold text-white/78">{point.title}</div>
+                <div className="text-[9px] uppercase tracking-widest text-white/35">{point.likelihood}</div>
+              </div>
+              <div className="text-[11px] text-white/55 leading-relaxed mt-1.5">{point.detail}</div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {result.blockers.length > 0 && (
         <div className="space-y-2">
