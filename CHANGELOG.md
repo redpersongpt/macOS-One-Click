@@ -2,6 +2,7 @@
 
 ## 2.2.2 - 2026-03-20
 
+- Fixed the packaged startup path so released apps load the renderer bundle from the correct `dist/index.html` location instead of opening to a black screen.
 - Fixed the Electron packaging entry so Windows and Linux packages include the correct compiled main-process bootstrap.
 - Split build and packaging scripts so release packaging can target Windows and Linux without producing a macOS package.
 - Moved public release packaging to native GitHub Actions runners for Windows and Linux and removed the macOS publish job from the release workflow.

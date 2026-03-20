@@ -65,6 +65,7 @@ import { runPreflightChecks, recordFailure, getFailureCount, shouldSkipRetry, ge
 import { simulateBuild, dryRunRecovery, verifyBuildState, verifyEfiBuildSuccess, verifyRecoverySuccess, type BuildPlan, type RecoveryDryRun, type StateVerification, type SuccessContract, type Certainty } from './deterministicLayer.js';
 import { runSafeSimulation, type SafeSimulationResult } from './safeSimulation.js';
 import { sim } from './simulation.js';
+import { getCompatModeConfigPath, getPackagedRendererEntryPath, getPreloadScriptPath } from './runtimePaths.js';
 import {
   deriveBiosFlowState,
   deriveReleaseFlowState,
@@ -423,7 +424,7 @@ process.on('unhandledRejection',  (err) => writeEarlyCrash('unhandledRejection',
 type CompatMode = 'none' | 'gpu-disabled' | 'legacy';
 let compatMode: CompatMode = 'none';
 try {
-  const compatFile = path.join(__dirname, 'compat.json');
+  const compatFile = getCompatModeConfigPath(__dirname);
   const parsed = JSON.parse(fs.readFileSync(compatFile, 'utf8'));
   compatMode = parsed.mode ?? 'none';
 } catch { /* no compat.json — standard build */ }
@@ -1905,8 +1906,63 @@ async function runPreflight(): Promise<PreflightResult> {
 
 let mainWindow: BrowserWindow | null = null;
 
+function buildStartupFailurePageUrl(title: string, message: string): string {
+  const escapeHtml = (value: string) => value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+
+  const html = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${escapeHtml(title)}</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #050505;
+        color: #f5f5f5;
+      }
+      main {
+        max-width: 680px;
+        padding: 32px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 20px;
+        background: rgba(255, 255, 255, 0.04);
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 28px;
+      }
+      p {
+        margin: 0;
+        line-height: 1.6;
+        color: rgba(245, 245, 245, 0.84);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>${escapeHtml(title)}</h1>
+      <p>${escapeHtml(message)}</p>
+    </main>
+  </body>
+</html>`;
+
+  return `data:text/html;charset=UTF-8,${encodeURIComponent(html)}`;
+}
+
 function createWindow() {
-  const preloadPath = path.join(__dirname, 'preload.js');
+  const preloadPath = getPreloadScriptPath(__dirname);
   const preloadExists = fs.existsSync(preloadPath);
   log('INFO', 'startup', 'createWindow — begin', {
     preloadPath,
@@ -1969,12 +2025,38 @@ function createWindow() {
   });
 
   if (app.isPackaged) {
-    const indexPath = path.join(__dirname, '../dist/index.html');
-    log('INFO', 'startup', 'loadFile — packaged', { indexPath, exists: fs.existsSync(indexPath) });
-    mainWindow.loadFile(indexPath);
+    const indexPath = getPackagedRendererEntryPath(__dirname);
+    const indexExists = fs.existsSync(indexPath);
+    log('INFO', 'startup', 'loadFile — packaged', { indexPath, exists: indexExists });
+
+    if (!preloadExists || !indexExists) {
+      log('FATAL', 'startup', 'Packaged startup asset missing', {
+        preloadExists,
+        indexExists,
+      });
+      void mainWindow.loadURL(buildStartupFailurePageUrl(
+        'Startup failed',
+        'The packaged application bundle is incomplete. Reinstall the app or send a report from this screen.',
+      ));
+      return;
+    }
+
+    void mainWindow.loadFile(indexPath).catch((error) => {
+      log('FATAL', 'startup', 'loadFile failed', { error: String(error) });
+      void mainWindow?.loadURL(buildStartupFailurePageUrl(
+        'Startup failed',
+        'The application could not load its packaged interface. Reinstall the app or send a report from this screen.',
+      ));
+    });
   } else {
     log('INFO', 'startup', 'loadURL — dev server');
-    mainWindow.loadURL('http://localhost:5173');
+    void mainWindow.loadURL('http://localhost:5173').catch((error) => {
+      log('FATAL', 'startup', 'loadURL failed', { error: String(error) });
+      void mainWindow?.loadURL(buildStartupFailurePageUrl(
+        'Development startup failed',
+        'The renderer dev server could not be reached. Restart the dev server and try again.',
+      ));
+    });
   }
 
   log('INFO', 'startup', 'createWindow — complete (loadFile/loadURL queued)');
