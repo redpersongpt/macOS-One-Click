@@ -99,21 +99,16 @@ jobs:
           tag_name: ${{ steps.tag.outputs.name }}
           name: "${{ steps.tag.outputs.name }}"
           body: |
-            macOS One-Click ${{ steps.tag.outputs.name }}
+            macOS OneClick ${{ steps.tag.outputs.name }}
 
-            This release publishes verified Windows and Linux packages only.
+            This release fixes USB target flow, backup-check timeouts, and clearer flash error guidance. Method selection now opens the USB and local partition paths correctly, the drive check no longer sits on long-running inspection text, and repeated write failures no longer jump straight to blaming the USB drive when the real cause is permissions, timeouts, or verification.
 
             Included assets:
             - Windows NSIS installer
             - Linux AppImage
             - Linux Debian package
 
-            Not included:
-            - macOS packaged build
-
-            Notes:
-            - See CHANGELOG.md in this tag for the exact release notes.
-            - Destructive flash safety, BIOS gating, EFI validation, backup policy, and tokenized authorization remain enforced.
+            Safety checks for flashing, EFI validation, BIOS gating, and backup handling remain in place.
           files: release-artifacts/**/*
           draft: false
           prerelease: false
