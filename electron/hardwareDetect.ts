@@ -234,7 +234,11 @@ export async function detectLinuxHardware(): Promise<DetectedHardware> {
 // ── macOS ─────────────────────────────────────────────────────────────────────
 
 export async function detectMacHardware(): Promise<DetectedHardware> {
-  const run = (cmd: string) => execPromise(cmd).catch(() => ({ stdout: '' }));
+  const run = (cmd: string, fallback = '') =>
+    execPromise(cmd, {
+      timeout: 5_000,
+      maxBuffer: 1024 * 1024,
+    }).catch(() => ({ stdout: fallback }));
 
   const [cpuRes, cpuVendorRes, gpuRes, memRes, modelRes] = await Promise.all([
     run('sysctl -n machdep.cpu.brand_string'),

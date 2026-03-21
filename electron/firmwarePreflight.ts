@@ -4,6 +4,13 @@ import fs from 'fs';
 
 const execPromise = util.promisify(exec);
 
+function runProbe(cmd: string, fallback = '') {
+  return execPromise(cmd, {
+    timeout: 5_000,
+    maxBuffer: 1024 * 1024,
+  }).catch(() => ({ stdout: fallback }));
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -258,7 +265,7 @@ function buildRequirements(
 
 export async function probeFirmwareWindows(): Promise<FirmwareInfo> {
   const ps = (cmd: string) =>
-    execPromise(`powershell -NoProfile -Command "${cmd}"`).catch(() => ({ stdout: '' }));
+    runProbe(`powershell -NoProfile -Command "${cmd}"`);
 
   const [biosRes, sbCmdletRes, vtRes, vtdRes, sbRegRes] = await Promise.all([
     ps('Get-CimInstance Win32_BIOS | Select-Object Manufacturer, SMBIOSBIOSVersion, ReleaseDate | ConvertTo-Json -Compress'),
@@ -416,16 +423,14 @@ export async function probeFirmwareWindows(): Promise<FirmwareInfo> {
 // ── Linux ─────────────────────────────────────────────────────────────────────
 
 export async function probeFirmwareLinux(): Promise<FirmwareInfo> {
-  const run = (cmd: string) => execPromise(cmd).catch(() => ({ stdout: '' }));
-
   const [dmidecodeRes, bootctlRes, lscpuRes, procCpuInfoRes, dmesgDmarRes, dmesgAbove4gRes] =
     await Promise.all([
-      run('dmidecode -t bios 2>/dev/null'),
-      run('bootctl status 2>/dev/null'),
-      run('lscpu 2>/dev/null'),
-      run('grep -m1 "flags" /proc/cpuinfo 2>/dev/null'),
-      run('dmesg 2>/dev/null | grep -iE "DMAR|IOMMU enabled|AMD-Vi" | head -5'),
-      run('dmesg 2>/dev/null | grep -iE "above 4G|above4g" | head -3'),
+      runProbe('dmidecode -t bios 2>/dev/null'),
+      runProbe('bootctl status 2>/dev/null'),
+      runProbe('lscpu 2>/dev/null'),
+      runProbe('grep -m1 "flags" /proc/cpuinfo 2>/dev/null'),
+      runProbe('dmesg 2>/dev/null | grep -iE "DMAR|IOMMU enabled|AMD-Vi" | head -5'),
+      runProbe('dmesg 2>/dev/null | grep -iE "above 4G|above4g" | head -3'),
     ]);
 
   // ── UEFI mode — /sys/firmware/efi is kernel-created only on EFI boot ────
@@ -541,8 +546,7 @@ export async function probeFirmwareLinux(): Promise<FirmwareInfo> {
 // All Hackintosh requirements are not_applicable.
 
 export async function probeFirmwareMac(): Promise<FirmwareInfo> {
-  const run = (cmd: string) => execPromise(cmd).catch(() => ({ stdout: '' }));
-  const bootRomRes = await run("system_profiler SPHardwareDataType 2>/dev/null | grep 'Boot ROM'");
+  const bootRomRes = await runProbe("system_profiler SPHardwareDataType 2>/dev/null | grep 'Boot ROM'");
   const romLine = bootRomRes.stdout.split('\n').find(l => l.includes('Boot ROM'));
   const version = romLine ? (romLine.split(':')[1]?.trim() ?? 'Unknown') : 'Unknown';
 

@@ -726,25 +726,29 @@ async function probeBiosSettings(): Promise<BIOSStatus> {
     secureBootDisabled: 'unknown',
     virtualizationEnabled: 'unknown'
   };
+  const runProbe = (cmd: string) => execPromise(cmd, {
+    timeout: 5_000,
+    maxBuffer: 1024 * 1024,
+  });
 
   if (process.platform === 'win32') {
     try {
-      const sb = await execPromise('powershell -NoProfile -Command "Confirm-SecureBootUEFI"');
+      const sb = await runProbe('powershell -NoProfile -Command "Confirm-SecureBootUEFI"');
       status.secureBootDisabled = sb.stdout.trim().toLowerCase() === 'false';
     } catch (e) {}
 
     try {
-      const vt = await execPromise('powershell -NoProfile -Command "(Get-CimInstance Win32_Processor).VirtualizationFirmwareEnabled"');
+      const vt = await runProbe('powershell -NoProfile -Command "(Get-CimInstance Win32_Processor).VirtualizationFirmwareEnabled"');
       status.virtualizationEnabled = vt.stdout.trim().toLowerCase() === 'true';
     } catch (e) {}
   } else if (process.platform === 'linux') {
     try {
-      const sb = await execPromise('bootctl status 2>/dev/null | grep "Secure Boot"');
+      const sb = await runProbe('bootctl status 2>/dev/null | grep "Secure Boot"');
       status.secureBootDisabled = sb.stdout.toLowerCase().includes('disabled');
     } catch (e) {}
     
     try {
-      const vt = await execPromise('lscpu | grep Virtualization');
+      const vt = await runProbe('lscpu | grep Virtualization');
       status.virtualizationEnabled = vt.stdout.includes('VT-x') || vt.stdout.includes('AMD-V');
     } catch (e) {}
   } else if (process.platform === 'darwin') {
@@ -1017,15 +1021,21 @@ async function getWindowsHardwareInfo(): Promise<HardwareProfile> {
 }
 
 async function getLinuxHardwareInfo(): Promise<HardwareProfile> {
+  const runLinuxProbe = (cmd: string, fallback = '') =>
+    execPromise(cmd, {
+      timeout: 5_000,
+      maxBuffer: 1024 * 1024,
+    }).catch(() => ({ stdout: fallback }));
+
   const [cpuRaw, gpuRaw, baseboardRaw, memRaw, chassisRaw, vendorRaw, batteryRaw] = await Promise.all([
-    execPromise('lscpu'),
-    execPromise('lspci | grep -i vga'),
-    execPromise('cat /sys/class/dmi/id/board_name 2>/dev/null || cat /sys/class/dmi/id/product_name 2>/dev/null'),
-    execPromise('free -b | grep Mem'),
-    execPromise('cat /sys/class/dmi/id/chassis_type 2>/dev/null'),
-    execPromise('cat /sys/class/dmi/id/sys_vendor 2>/dev/null'),
-    execPromise('ls /sys/class/power_supply 2>/dev/null | grep -E "^BAT"')
-  ]).catch(() => [{stdout: ''}, {stdout: ''}, {stdout: 'Unknown'}, {stdout: '0 0'}, {stdout: '3'}, {stdout: 'Unknown'}, {stdout: ''}]);
+    runLinuxProbe('lscpu'),
+    runLinuxProbe('lspci | grep -i vga'),
+    runLinuxProbe('cat /sys/class/dmi/id/board_name 2>/dev/null || cat /sys/class/dmi/id/product_name 2>/dev/null', 'Unknown'),
+    runLinuxProbe('free -b | grep Mem', '0 0'),
+    runLinuxProbe('cat /sys/class/dmi/id/chassis_type 2>/dev/null', '3'),
+    runLinuxProbe('cat /sys/class/dmi/id/sys_vendor 2>/dev/null', 'Unknown'),
+    runLinuxProbe('ls /sys/class/power_supply 2>/dev/null | grep -E "^BAT"'),
+  ]);
 
   const cpuLines = cpuRaw.stdout.split('\n');
   const cpuModel = (cpuLines.find(l => l.includes('Model name:')) || '').split(':')[1]?.trim() || 'Unknown CPU';
@@ -1060,13 +1070,19 @@ async function getLinuxHardwareInfo(): Promise<HardwareProfile> {
 }
 
 async function getMacHardwareInfo(): Promise<HardwareProfile> {
+  const runMacProbe = (cmd: string, fallback = '') =>
+    execPromise(cmd, {
+      timeout: 5_000,
+      maxBuffer: 1024 * 1024,
+    }).catch(() => ({ stdout: fallback }));
+
   const [cpuRaw, gpuRaw, memRaw, modelRaw, hwModelRaw] = await Promise.all([
-    execPromise('sysctl -n machdep.cpu.brand_string'),
-    execPromise('system_profiler SPDisplaysDataType 2>/dev/null | grep "Chipset Model" | awk -F": " \'{print $2}\''),
-    execPromise('sysctl -n hw.memsize'),
-    execPromise('system_profiler SPHardwareDataType 2>/dev/null | grep "Model Identifier" | cut -d: -f2'),
-    execPromise('sysctl -n hw.model 2>/dev/null')
-  ]).catch(() => [{stdout: 'Unknown Mac CPU'}, {stdout: 'Unknown Mac GPU'}, {stdout: '8589934592'}, {stdout: 'Mac'}, {stdout: 'Unknown'}]);
+    runMacProbe('sysctl -n machdep.cpu.brand_string', 'Unknown Mac CPU'),
+    runMacProbe('system_profiler SPDisplaysDataType 2>/dev/null | grep "Chipset Model" | awk -F": " \'{print $2}\'', 'Unknown Mac GPU'),
+    runMacProbe('sysctl -n hw.memsize', '8589934592'),
+    runMacProbe('system_profiler SPHardwareDataType 2>/dev/null | grep "Model Identifier" | cut -d: -f2', 'Mac'),
+    runMacProbe('sysctl -n hw.model 2>/dev/null', 'Unknown'),
+  ]);
   
   const boardName = modelRaw.stdout.trim() || 'Unknown Mac';
   const cpuModel = cpuRaw.stdout.trim();
