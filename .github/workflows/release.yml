@@ -101,14 +101,14 @@ jobs:
           body: |
             macOS OneClick ${{ steps.tag.outputs.name }}
 
-            This release fixes USB target flow, backup-check timeouts, and clearer flash error guidance. Method selection now opens the USB and local partition paths correctly, the drive check no longer sits on long-running inspection text, and repeated write failures no longer jump straight to blaming the USB drive when the real cause is permissions, timeouts, or verification.
+            This release fixes Windows USB flash preparation so valid removable targets keep their disk identity from selection through confirmation. It also closes the stale disk-info race that could let an older lookup overwrite the current USB target, hardens Windows disk-info IPC against slow removable-media queries, and adds RX 6950 XT support on the supported Navi 21 path.
 
             Included assets:
             - Windows NSIS installer
             - Linux AppImage
             - Linux Debian package
 
-            Safety checks for flashing, EFI validation, BIOS gating, and backup handling remain in place.
+            Safety checks for flashing, EFI validation, BIOS gating, backup handling, system-disk blocking, and disk-identity verification remain in place.
           files: release-artifacts/**/*
           draft: false
           prerelease: false

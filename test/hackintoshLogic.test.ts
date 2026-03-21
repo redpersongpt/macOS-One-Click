@@ -301,6 +301,22 @@ describe('Hackintosh compatibility logic', () => {
     assert.equal(report.isCompatible, true);
   });
 
+  test('RX 6950 XT follows the supported Navi 21 path', () => {
+    const report = checkCompatibility(makeProfile({
+      cpu: 'AMD Ryzen 7 5700X',
+      architecture: 'AMD',
+      generation: 'Ryzen',
+      gpu: 'AMD Radeon RX 6950 XT',
+      gpuDevices: [{ name: 'AMD Radeon RX 6950 XT', vendorName: 'AMD' }],
+      motherboard: 'ASUS B650E-F Gaming',
+      smbios: 'MacPro7,1',
+    }));
+
+    assert.notEqual(report.level, 'blocked');
+    assert.equal(report.isCompatible, true);
+    assert.equal(report.recommendedVersion, 'macOS Tahoe 26');
+  });
+
   test('persisted-state restore falls back to report when compatibility becomes blocked', () => {
     const decision = restoreFlowDecision(makeProfile({
       gpu: 'NVIDIA GeForce RTX 3070',

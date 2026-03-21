@@ -135,6 +135,15 @@ export function createDiskOps(log: LogFunction): DiskOps {
     });
   }
 
+  async function withBestEffort<T>(promise: Promise<T>, fallback: T, timeoutMs = 6_000): Promise<T> {
+    return await Promise.race([
+      promise.catch(() => fallback),
+      new Promise<T>((resolve) => {
+        setTimeout(() => resolve(fallback), timeoutMs);
+      }),
+    ]);
+  }
+
   function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
@@ -691,13 +700,14 @@ export function createDiskOps(log: LogFunction): DiskOps {
         : process.platform === 'win32'
           ? getWindowsIdentity(device)
           : Promise.resolve({});
+    const queryTimeoutMs = process.platform === 'win32' ? 5_000 : 6_000;
     const [sysDisk, partTable, mountedPartitions, devSize, model, identity] = await Promise.all([
-      getSystemDiskId().catch(() => ''),
-      getDiskPartitionTable(device),
-      getMountedPartitions(device).catch(() => [] as string[]),
-      getDeviceSize(device).catch(() => 0),
-      getDeviceModel(device).catch(() => ''),
-      identityPromise,
+      withBestEffort(getSystemDiskId(), '', queryTimeoutMs),
+      withBestEffort(getDiskPartitionTable(device), 'unknown' as const, queryTimeoutMs),
+      withBestEffort(getMountedPartitions(device), [] as string[], queryTimeoutMs),
+      withBestEffort(getDeviceSize(device), 0, queryTimeoutMs),
+      withBestEffort(getDeviceModel(device), '', queryTimeoutMs),
+      withBestEffort(identityPromise, {} as Partial<DiskInfo>, queryTimeoutMs),
     ]);
     const isSystemDisk = !!sysDisk && (device === sysDisk || device.startsWith(sysDisk + 's') || device.replace(/p?\d+$/, '') === sysDisk);
     return {

@@ -558,6 +558,23 @@ export function buildDiskIdentityFingerprint(info: Partial<DiskInfo> | DiskIdent
   return fingerprint;
 }
 
+export function resolveFlashPreparationIdentity(
+  expectedIdentity: Partial<DiskInfo> | DiskIdentityFingerprint | null | undefined,
+  currentDisk: DiskInfo | null | undefined,
+): DiskIdentityFingerprint | null {
+  const expectedFingerprint = buildDiskIdentityFingerprint(expectedIdentity);
+  if (Object.keys(expectedFingerprint).length > 0) {
+    return expectedFingerprint;
+  }
+  if (!currentDisk) return null;
+  if (currentDisk.isSystemDisk) return null;
+  if (currentDisk.partitionTable !== 'gpt') return null;
+  if (currentDisk.identityConfidence === 'weak' || currentDisk.identityConfidence === 'ambiguous') return null;
+
+  const currentFingerprint = buildDiskIdentityFingerprint(currentDisk);
+  return Object.keys(currentFingerprint).length > 0 ? currentFingerprint : null;
+}
+
 export function createFlashAuthorizationSnapshot(input: {
   stage: FlashAuthorizationSnapshotStage;
   capturedAt?: number;

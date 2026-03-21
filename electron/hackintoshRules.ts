@@ -285,6 +285,7 @@ export function classifyGpu(device: HardwareGpuDeviceSummary): GpuAssessment {
       lower.includes('rx 5700') ||
       lower.includes('rx 6600') ||
       lower.includes('rx 6650') ||
+      lower.includes('rx 6950') ||
       lower.includes('rx 6800') ||
       lower.includes('rx 6900') ||
       lower.includes('radeon vii') ||
@@ -321,7 +322,7 @@ export function classifyGpu(device: HardwareGpuDeviceSummary): GpuAssessment {
         'supported',
         olderPolarisOrVega ? 26 : 26,
         [],
-        { requiresPikera: /rx (?:5500|5600|5700|6600|6650|6800|6900)|w5500|w5700|w6600|w6800/.test(lower) },
+        { requiresPikera: /rx (?:5500|5600|5700|6600|6650|6800|6900|6950)|w5500|w5700|w6600|w6800/.test(lower) },
       );
     }
 
@@ -421,6 +422,7 @@ export function hasMacProEraAmdGpu(gpus: Array<string | HardwareGpuDeviceSummary
       lower.includes('rx 5600') ||
       lower.includes('rx 5700') ||
       lower.includes('rx 6600') ||
+      lower.includes('rx 6950') ||
       lower.includes('rx 6800') ||
       lower.includes('rx 6900')
     );

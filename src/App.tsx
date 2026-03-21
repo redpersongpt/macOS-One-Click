@@ -88,6 +88,12 @@ import type {
 } from '../electron/hardwareProfileArtifact';
 import type { EfiBackupPolicy } from '../electron/efiBackup';
 import type { ResourcePlan } from '../electron/resourcePlanner';
+import {
+  pickSelectedDiskInfo,
+  shouldRetryDiskInfoLookup,
+  toExpectedDiskIdentity,
+  type RendererDiskInfo,
+} from './lib/diskIdentityState.js';
 import type { SafeSimulationResult } from '../electron/safeSimulation';
 import type { PublicDiagnosticsSnapshot } from '../electron/releaseDiagnostics';
 type KextFetchResult = { name: string; version: string; source?: 'github' | 'embedded' | 'failed' };
@@ -105,7 +111,7 @@ declare global {
       fetchLatestKexts: (efi: string, ks: string[]) => Promise<KextFetchResult[]>;
       downloadRecovery: (dir: string, osv: string, startOffset?: number) => Promise<{ dmgPath: string; recoveryDir: string }>;
       listUsbDevices: () => Promise<{ name: string; device: string; size: string }[]>;
-      prepareFlashConfirmation: (dev: string, efi: string, expectedIdentity?: { devicePath?: string; sizeBytes?: number; model?: string; vendor?: string; serialNumber?: string; transport?: string; removable?: boolean; partitionTable?: string }) => Promise<{ token: string; expiresAt: number; diskInfo: { device: string; devicePath?: string; isSystemDisk: boolean; partitionTable: string; sizeBytes?: number; model?: string; vendor?: string; serialNumber?: string; transport?: string; removable?: boolean; identityConfidence?: string; identityFieldsUsed?: string[] }; backupPolicy: EfiBackupPolicy }>;
+      prepareFlashConfirmation: (dev: string, efi: string, expectedIdentity?: { devicePath?: string; sizeBytes?: number; model?: string; vendor?: string; serialNumber?: string; transport?: string; removable?: boolean; partitionTable?: string }) => Promise<{ token: string; expiresAt: number; diskInfo: RendererDiskInfo; backupPolicy: EfiBackupPolicy }>;
       flashUsb: (dev: string, efi: string, ok: boolean, confirmationToken?: string | null) => Promise<boolean>;
       validateEfi: (efiPath: string, profile?: import('../electron/configGenerator').HardwareProfile | null) => Promise<import('../electron/configValidator').ValidationResult>;
       enableProductionLock: (efi: string, targetOS?: string) => Promise<boolean>;
@@ -133,7 +139,7 @@ declare global {
       shrinkPartition: (disk: string, sizeGB: number, confirmed: boolean) => Promise<void>;
       createBootPartition: (disk: string, efiPath: string, confirmed: boolean, profile?: import('../electron/configGenerator').HardwareProfile | null) => Promise<void>;
       getDownloadResumeState: () => Promise<{ offset: number; dmgDest: string; clDest: string | null; efiPath: string; targetOS: string } | null>;
-      getDiskInfo: (device: string) => Promise<{ device: string; devicePath?: string; isSystemDisk: boolean; partitionTable: string; sizeBytes?: number; model?: string; vendor?: string; serialNumber?: string; transport?: string; removable?: boolean; identityConfidence?: string; identityFieldsUsed?: string[] }>;
+      getDiskInfo: (device: string) => Promise<RendererDiskInfo>;
       runPreflight: () => Promise<{ ok: boolean; issues: Array<{ severity: string; message: string }>; adminPrivileges: boolean; binaries: Record<string, boolean>; freeSpaceMB: number }>;
       // Task manager
       onTaskUpdate: (cb: (payload: { task: import('../electron/taskManager').TaskState }) => void) => void;
@@ -237,6 +243,7 @@ export default function App() {
   const [platform, setPlatform] = useState<string>('unknown');
   const [adminPrivileges, setAdminPrivileges] = useState<boolean | null>(null);
   const [usbDevices, setUsbDevices] = useState<import('./components/steps/UsbStep').DriveInfo[]>([]);
+  const [usbRefreshBusy, setUsbRefreshBusy] = useState(false);
   const [selectedUsb, setSelectedUsb] = useState<string | null>(null);
   const [efiBackupPolicy, setEfiBackupPolicy] = useState<EfiBackupPolicy | null>(null);
   const [productionLocked, setProdLock] = useState(false);
@@ -255,7 +262,10 @@ export default function App() {
   const lastRecovSaveRef = useRef(0);
   const isDeployingRef = useRef(false);
   const isScanningRef = useRef(false);
-  const [diskInfo, setDiskInfo] = useState<{ device: string; devicePath?: string; isSystemDisk: boolean; partitionTable: string; sizeBytes?: number; model?: string; vendor?: string; serialNumber?: string; transport?: string; removable?: boolean; identityConfidence?: string; identityFieldsUsed?: string[] } | null>(null);
+  const usbRefreshRequestRef = useRef(0);
+  const selectedUsbInfoRequestRef = useRef(0);
+  const selectedUsbRef = useRef<string | null>(null);
+  const [diskInfo, setDiskInfo] = useState<RendererDiskInfo | null>(null);
   const [showDiskWarning, setShowDiskWarning] = useState(false);
   const [showUnknownPartitionWarning, setShowUnknownPartitionWarning] = useState(false);
   const [showFlashConfirm, setShowFlashConfirm] = useState(false);
@@ -700,8 +710,7 @@ export default function App() {
     setRecovDmgDest(null);
     setRecovClDest(null);
     setCachedRecovInfo(null);
-    setSelectedUsb(null);
-    setDiskInfo(null);
+    clearSelectedUsbState();
     setFlashMilestones([]);
     setRecoveryDryRun(null);
     setShowFlashConfirm(false);
@@ -725,6 +734,55 @@ export default function App() {
     setFlashConfirmText('');
     setFlashChecks(new Set());
     setFlashConfirmBusy(false);
+  };
+
+  const clearSelectedUsbState = () => {
+    selectedUsbRef.current = null;
+    setSelectedUsb(null);
+    setDiskInfo(null);
+    setEfiBackupPolicy(null);
+    clearFlashConfirmationState();
+  };
+
+  const handleUsbSelection = (device: string | null) => {
+    selectedUsbInfoRequestRef.current += 1;
+    if (!device) {
+      clearSelectedUsbState();
+      return;
+    }
+    selectedUsbRef.current = device;
+    setSelectedUsb(device);
+    setDiskInfo(null);
+    setEfiBackupPolicy(null);
+    clearFlashConfirmationState();
+  };
+
+  const setDiskInfoIfCurrent = (device: string, info: RendererDiskInfo) => {
+    if (selectedUsbRef.current === device) {
+      setDiskInfo(info);
+    }
+  };
+
+  const resolveDiskInfoForDevice = async (
+    device: string,
+    options?: { retries?: number; preferCaptured?: boolean },
+  ): Promise<RendererDiskInfo | null> => {
+    const retries = options?.retries ?? 2;
+    const captured = pickSelectedDiskInfo(device, diskInfo, null);
+    for (let attempt = 0; attempt < retries; attempt += 1) {
+      try {
+        const info = await window.electron.getDiskInfo(device);
+        setDiskInfoIfCurrent(device, info);
+        return info;
+      } catch (error) {
+        if (!shouldRetryDiskInfoLookup(error, attempt, retries)) break;
+        await new Promise((resolve) => setTimeout(resolve, 350));
+      }
+    }
+    if (options?.preferCaptured !== false && captured) {
+      return captured;
+    }
+    return null;
   };
 
   const getBuildGuardRedirect = (activeCompat: CompatibilityReport | null | undefined): StepId =>
@@ -936,6 +994,31 @@ export default function App() {
       cancelled = true;
     };
   }, [profile, efiPath]);
+
+  useEffect(() => {
+    selectedUsbRef.current = selectedUsb;
+    if (!selectedUsb) {
+      setDiskInfo(null);
+      return;
+    }
+
+    let cancelled = false;
+    const requestId = selectedUsbInfoRequestRef.current + 1;
+    selectedUsbInfoRequestRef.current = requestId;
+
+    const captureIdentity = async () => {
+      const info = await resolveDiskInfoForDevice(selectedUsb, { retries: 2, preferCaptured: false }).catch(() => null);
+      if (!cancelled && selectedUsbInfoRequestRef.current === requestId && info) {
+        setDiskInfoIfCurrent(selectedUsb, info);
+      }
+    };
+
+    void captureIdentity();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedUsb]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (step !== 'usb-select' || !selectedUsb) {
@@ -1544,8 +1627,7 @@ export default function App() {
     setRecovDmgDest(null);
     setRecovClDest(null);
     setCachedRecovInfo(null);
-    setSelectedUsb(null);
-    setDiskInfo(null);
+    clearSelectedUsbState();
     setFlashMilestones([]);
     setRecoveryDryRun(null);
     setShowFlashConfirm(false);
@@ -2003,13 +2085,38 @@ export default function App() {
     );
   };
 
+  const toPendingDrives = (
+    rawDevs: { name: string; device: string; size: string; type?: string }[]
+  ): import('./components/steps/UsbStep').DriveInfo[] => rawDevs.map((d) => ({
+    name: d.name,
+    device: d.device,
+    size: d.size,
+  }));
+
+  const loadUsbTargets = async (
+    rawLoader: () => Promise<{ name: string; device: string; size: string; type?: string }[]>,
+  ) => {
+    const requestId = Date.now();
+    usbRefreshRequestRef.current = requestId;
+    setUsbRefreshBusy(true);
+    const devices = await rawLoader();
+    setUsbDevices(toPendingDrives(devices));
+    try {
+      const enriched = await enrichDrives(devices);
+      if (usbRefreshRequestRef.current === requestId) {
+        setUsbDevices(enriched);
+      }
+    } finally {
+      if (usbRefreshRequestRef.current === requestId) {
+        setUsbRefreshBusy(false);
+      }
+    }
+  };
+
   const refreshUsbTargets = async () => {
     try {
-      const devices = await window.electron.listUsbDevices();
-      setUsbDevices(await enrichDrives(devices));
-      setSelectedUsb(null);
-      setEfiBackupPolicy(null);
-      clearFlashConfirmationState();
+      await loadUsbTargets(() => window.electron.listUsbDevices());
+      clearSelectedUsbState();
     } catch (error: any) {
       setErrorWithSuggestion(error?.message || 'Failed to refresh removable drives. Reconnect the target USB and try again.', 'usb-select');
     }
@@ -2017,13 +2124,14 @@ export default function App() {
 
   const refreshPartitionTargets = async () => {
     try {
+      setUsbRefreshBusy(true);
       const drives = await window.electron.getHardDrives();
       setUsbDevices(await enrichDrives(drives));
-      setSelectedUsb(null);
-      setEfiBackupPolicy(null);
-      clearFlashConfirmationState();
+      clearSelectedUsbState();
     } catch (error: any) {
       setErrorWithSuggestion(error?.message || 'Failed to refresh disks. Retry or rescan before modifying a drive.', 'part-prep');
+    } finally {
+      setUsbRefreshBusy(false);
     }
   };
 
@@ -2056,23 +2164,23 @@ export default function App() {
     try {
       setMethod(m);
       // Always reset selection when loading new drive list
-      setSelectedUsb(null);
+      clearSelectedUsbState();
       setUsbDevices([]);
-      clearFlashConfirmationState();
       if (m === 'usb') {
         const transition = attemptStepTransition('usb-select');
         if (!transition?.ok) return;
-        const devs = await window.electron.listUsbDevices();
-        const enriched = await enrichDrives(devs);
-        setUsbDevices(enriched);
+        await loadUsbTargets(() => window.electron.listUsbDevices());
       } else {
         const transition = attemptStepTransition('part-prep');
         if (!transition?.ok) return;
+        setUsbRefreshBusy(true);
         const drives = await window.electron.getHardDrives();
         const enriched = await enrichDrives(drives);
         setUsbDevices(enriched);
+        setUsbRefreshBusy(false);
       }
     } catch (e: any) {
+      setUsbRefreshBusy(false);
       setErrorWithSuggestion(e.message || 'Failed to list drives');
     }
   };
@@ -2165,22 +2273,24 @@ export default function App() {
         return;
       }
     }
-    try {
-      const info = await window.electron.getDiskInfo(selectedUsb);
-      setDiskInfo(info);
-      if (info.isSystemDisk) {
+    const selectedDiskInfo = await resolveDiskInfoForDevice(selectedUsb, { retries: 2, preferCaptured: true });
+    if (selectedDiskInfo) {
+      if (selectedDiskInfo.isSystemDisk) {
         setErrorWithSuggestion(`SYSTEM_DISK: ${selectedUsb} is your system/boot disk. Select a different USB drive.`);
+        setFlashConfirmBusy(false);
         return;
       }
-      if (info.partitionTable === 'mbr') {
+      if (selectedDiskInfo.partitionTable === 'mbr') {
         setShowDiskWarning(true);
+        setFlashConfirmBusy(false);
         return;
       }
-      if (info.partitionTable === 'unknown') {
+      if (selectedDiskInfo.partitionTable === 'unknown') {
         setShowUnknownPartitionWarning(true);
+        setFlashConfirmBusy(false);
         return;
       }
-    } catch { /* proceed — disk info is best-effort */ }
+    }
     // Run EFI validation before showing confirmation
     setValidationResult(null);
     setValidationRunning(true);
@@ -2211,18 +2321,9 @@ export default function App() {
       const prepared = await window.electron.prepareFlashConfirmation(
         selectedUsb,
         efiPath,
-        diskInfo ? {
-          devicePath: diskInfo.devicePath,
-          sizeBytes: diskInfo.sizeBytes,
-          model: diskInfo.model,
-          vendor: diskInfo.vendor,
-          serialNumber: diskInfo.serialNumber,
-          transport: diskInfo.transport,
-          removable: diskInfo.removable,
-          partitionTable: diskInfo.partitionTable,
-        } : undefined,
+        toExpectedDiskIdentity(pickSelectedDiskInfo(selectedUsb, selectedDiskInfo, diskInfo)),
       );
-      setDiskInfo(prepared.diskInfo);
+      setDiskInfoIfCurrent(selectedUsb, prepared.diskInfo);
       setEfiBackupPolicy(prepared.backupPolicy);
       setFlashConfirmationToken(prepared.token);
       setFlashConfirmationExpiresAt(prepared.expiresAt);
@@ -2262,9 +2363,9 @@ export default function App() {
 
       // Final check: did the drive disappear or change ID since selection?
       try {
-        const info = await window.electron.getDiskInfo(selectedUsb);
+        const info = await resolveDiskInfoForDevice(selectedUsb, { retries: 2, preferCaptured: true });
         if (!info) throw new Error('Device lost');
-        setDiskInfo(info);
+        setDiskInfoIfCurrent(selectedUsb, info);
       } catch (e) {
         setErrorWithSuggestion(`The selected drive (${selectedUsb}) is not found — device disconnected. Please re-select the drive and try again.`);
         clearFlashConfirmationState();
@@ -2971,7 +3072,7 @@ export default function App() {
                 {/* PARTITION PREP */}
                 {step === 'part-prep' && (
                   <motion.div key="part" initial={stepEnter} animate={stepActive} exit={stepExit} transition={STEP_TRANSITION} className="h-full">
-                    <UsbStep devices={usbDevices} selected={selectedUsb} onSelect={v => { setSelectedUsb(v); setDiskInfo(null); setEfiBackupPolicy(null); clearFlashConfirmationState(); }} onRefresh={refreshPartitionTargets} requireFullSize={true} />
+                    <UsbStep devices={usbDevices} selected={selectedUsb} onSelect={handleUsbSelection} onRefresh={refreshPartitionTargets} requireFullSize={true} loading={usbRefreshBusy} />
                     {selectedUsb && (
                       <div className="pt-6 flex justify-end">
                         <button onClick={() => preparePartition(false)} className="px-8 py-3.5 bg-purple-600 text-white rounded-xl font-bold text-sm hover:bg-purple-500 transition-all cursor-pointer shadow-lg shadow-purple-600/20">
@@ -2996,11 +3097,13 @@ export default function App() {
                       devices={usbDevices}
                       selected={selectedUsb}
                       backupPolicy={efiBackupPolicy}
-                      onSelect={v => { setSelectedUsb(v); setDiskInfo(null); setEfiBackupPolicy(null); clearFlashConfirmationState(); }}
-                      onDeselect={() => { setSelectedUsb(null); setDiskInfo(null); setEfiBackupPolicy(null); clearFlashConfirmationState(); }}
+                      onSelect={handleUsbSelection}
+                      onDeselect={() => { handleUsbSelection(null); }}
                       onRefresh={refreshUsbTargets}
                       onConfirmDrive={initiateFlash}
                       confirmDriveBusy={flashConfirmBusy}
+                      loading={usbRefreshBusy}
+                      allowUnverifiedSelection={true}
                       requireFullSize={recovPct >= 100}
                     />
                   </motion.div>

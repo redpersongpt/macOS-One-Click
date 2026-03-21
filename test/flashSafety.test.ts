@@ -15,6 +15,7 @@ import {
   createFlashAuthorizationSnapshot,
   createFlashConfirmationStore,
   findDiskIdentityCollisions,
+  resolveFlashPreparationIdentity,
   validateFlashConfirmation,
   validateFlashConfirmationRecord,
   type FlashAuthorizationSnapshot,
@@ -264,6 +265,27 @@ describe('flash safety decision wall', () => {
     const result = canProceedWithFlash(makeContext({ currentDisk: makeDisk({ identityConfidence: 'weak', serialNumber: undefined }) }));
     assert.equal(result.allowed, false);
     assert.equal(result.code, 'IDENTITY_WEAK');
+  });
+
+  test('rehydrates a missing expected identity from the current removable usb during flash preparation', () => {
+    const fingerprint = resolveFlashPreparationIdentity(null, makeDisk());
+
+    assert.deepEqual(fingerprint, {
+      serialNumber: 'ser123',
+      devicePath: '/dev/disk4',
+      vendor: 'sandisk',
+      transport: 'usb',
+      partitionTable: 'gpt',
+      sizeBytes: 32 * 1e9,
+      model: 'usb flash',
+      removable: true,
+    });
+  });
+
+  test('does not rehydrate flash identity for a true unsafe disk', () => {
+    const fingerprint = resolveFlashPreparationIdentity(null, makeDisk({ isSystemDisk: true }));
+
+    assert.equal(fingerprint, null);
   });
 
   test('blocks disk identity changes after selection', () => {

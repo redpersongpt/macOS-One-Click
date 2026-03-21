@@ -54,6 +54,7 @@ import {
   createFlashAuthorizationSnapshotFromRecord,
   createFlashConfirmationStore,
   findDiskIdentityCollisions,
+  resolveFlashPreparationIdentity,
   type DiskIdentityFingerprint,
   type FlashAuthorizationMismatchField,
   type FlashAuthorizationSnapshot,
@@ -2897,10 +2898,10 @@ app.whenReady().then(async () => {
     const { buildProfile, hardwareFingerprint, hardwareProfileDigest } = requireFlashAuthorizationContext();
     const resolvedEfiPath = path.resolve(efiPath);
     const currentDisk = await diskOps.getDiskInfo(device);
-    const capturedIdentity = expectedIdentity ?? null;
+    const capturedIdentity = resolveFlashPreparationIdentity(expectedIdentity ?? null, currentDisk);
 
     if (!capturedIdentity) {
-      throw new Error('SAFETY BLOCK: No disk identity was captured when this drive was selected. Re-select the drive before flashing.');
+      throw new Error('SAFETY BLOCK: Disk identity could not be confirmed for this target. Re-select the drive and wait for its details to load before flashing.');
     }
     const deployGuard = await getDeployFlowGuard(buildProfile, resolvedEfiPath);
     const biosState = await getBiosStateForProfile(buildProfile);

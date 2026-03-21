@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.3.8 - 2026-03-21
+
+- Fixed USB flash-prep disk identity loss on Windows so valid removable targets keep a stable identity from selection through flash confirmation.
+- Fixed a stale disk-info race where an older lookup could overwrite the currently selected USB target.
+- Fixed Windows disk info IPC instability by degrading slow removable-media queries safely instead of failing the whole lookup.
+
 ## 2.3.6 - 2026-03-21
 
 - Fixed the remaining EFI-build stall after BIOS Continue by auto-starting the build flow instead of landing on a second manual Begin gate.

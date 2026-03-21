@@ -34,7 +34,11 @@ interface BlockReason {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function classifyDrive(drive: DriveInfo, requireFullSize: boolean): { tier: DriveTier; reasons: BlockReason[]; unreliable?: boolean } {
+export function classifyDrive(
+  drive: DriveInfo,
+  requireFullSize: boolean,
+  options?: { allowUnverifiedSelection?: boolean },
+): { tier: DriveTier; reasons: BlockReason[]; unreliable?: boolean; pendingVerification?: boolean } {
   const reasons: BlockReason[] = [];
   let unreliable = false;
 
@@ -97,6 +101,19 @@ function classifyDrive(drive: DriveInfo, requireFullSize: boolean): { tier: Driv
 
   // Disk info not yet loaded — show as suspicious until confirmed
   if (drive.isSystemDisk === undefined || drive.partitionTable === undefined) {
+    if (options?.allowUnverifiedSelection) {
+      return {
+        tier: 'safe',
+        unreliable: false,
+        pendingVerification: true,
+        reasons: [{
+          code: 'UNVERIFIED',
+          label: 'Checking drive details',
+          explanation: 'Drive details are still loading. Flashing stays blocked until this check finishes.',
+          howToFix: null,
+        }],
+      };
+    }
     return {
       tier: 'suspicious',
       unreliable: true,
@@ -276,6 +293,7 @@ function DriveCard({
   beginnerBlocked,
   advancedAckGranted,
   requireFullSize,
+  allowUnverifiedSelection,
 }: {
   drive: DriveInfo;
   selected: boolean;
@@ -283,10 +301,11 @@ function DriveCard({
   beginnerBlocked: boolean;
   advancedAckGranted: boolean;
   requireFullSize: boolean;
+  allowUnverifiedSelection?: boolean;
   key?: string;
 }) {
   const [reasonExpanded, setReasonExpanded] = useState(false);
-  const { tier, reasons } = classifyDrive(drive, requireFullSize);
+  const { tier, reasons, pendingVerification } = classifyDrive(drive, requireFullSize, { allowUnverifiedSelection });
 
   // In beginner mode: blocked tier is always blocked; suspicious tier is blocked
   // unless the user has granted typed acknowledgement for this specific drive.
@@ -370,7 +389,7 @@ function DriveCard({
           <div className="text-lg font-bold text-white tracking-tight">{drive.size}</div>
           <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold border ${style.badge}`}>
             <TierIcon className="w-2.5 h-2.5" />
-            {style.badgeLabel}
+            {pendingVerification ? 'Checking' : style.badgeLabel}
           </div>
           {selected && !isBlocked && (
             <motion.div
@@ -517,10 +536,21 @@ interface SelectionReviewPanelProps {
   onConfirm: () => void;
   confirmBusy: boolean;
   requireFullSize: boolean;
+  allowUnverifiedSelection?: boolean;
 }
 
-function plainLanguageSummary(drive: DriveInfo, requireFullSize: boolean): { text: string; safe: boolean } {
-  const { tier } = classifyDrive(drive, requireFullSize);
+function plainLanguageSummary(
+  drive: DriveInfo,
+  requireFullSize: boolean,
+  allowUnverifiedSelection = false,
+): { text: string; safe: boolean } {
+  const { tier, pendingVerification } = classifyDrive(drive, requireFullSize, { allowUnverifiedSelection });
+  if (pendingVerification) {
+    return {
+      text: 'Drive details are still loading. Flashing stays locked until the check finishes.',
+      safe: false,
+    };
+  }
   if (tier === 'blocked') {
     return {
       text: 'This drive is blocked and cannot be selected. It is either your system disk or has been identified as an internal (non-removable) drive.',
@@ -549,9 +579,19 @@ function plainLanguageSummary(drive: DriveInfo, requireFullSize: boolean): { tex
   };
 }
 
-function SelectionReviewPanel({ drive, driveStillPresent, backupPolicy, onRescan, onBack, onConfirm, confirmBusy, requireFullSize }: SelectionReviewPanelProps) {
-  const summary = plainLanguageSummary(drive, requireFullSize);
-  const { tier, unreliable } = classifyDrive(drive, requireFullSize);
+function SelectionReviewPanel({
+  drive,
+  driveStillPresent,
+  backupPolicy,
+  onRescan,
+  onBack,
+  onConfirm,
+  confirmBusy,
+  requireFullSize,
+  allowUnverifiedSelection = false,
+}: SelectionReviewPanelProps) {
+  const summary = plainLanguageSummary(drive, requireFullSize, allowUnverifiedSelection);
+  const { tier, unreliable, pendingVerification } = classifyDrive(drive, requireFullSize, { allowUnverifiedSelection });
 
   const rows: { label: string; value: string; tooltip?: string }[] = [
     {
@@ -583,7 +623,7 @@ function SelectionReviewPanel({ drive, driveStillPresent, backupPolicy, onRescan
     },
   ];
 
-  const canConfirm = tier !== 'blocked' && driveStillPresent && backupPolicy?.status !== 'blocked' && !confirmBusy;
+  const canConfirm = tier !== 'blocked' && driveStillPresent && backupPolicy?.status !== 'blocked' && !confirmBusy && !pendingVerification;
 
   return (
     <motion.div
@@ -720,6 +760,8 @@ function SelectionReviewPanel({ drive, driveStillPresent, backupPolicy, onRescan
               ? 'Drive disconnected — reconnect it or go back.'
               : confirmBusy
               ? 'Preparing the final confirmation…'
+              : pendingVerification
+              ? 'Still checking drive details…'
               : backupPolicy?.status === 'blocked'
               ? 'Existing EFI could not be backed up safely on this target.'
               : 'This drive is blocked by safety rules.'}
@@ -743,18 +785,32 @@ interface Props {
   onConfirmDrive?: () => void;
   confirmDriveBusy?: boolean;
   requireFullSize?: boolean;
+  loading?: boolean;
+  allowUnverifiedSelection?: boolean;
 }
 
-export default function UsbStep({ devices, selected, backupPolicy = null, onSelect, onDeselect, onRefresh, onConfirmDrive, confirmDriveBusy = false, requireFullSize = true }: Props) {
+export default function UsbStep({
+  devices,
+  selected,
+  backupPolicy = null,
+  onSelect,
+  onDeselect,
+  onRefresh,
+  onConfirmDrive,
+  confirmDriveBusy = false,
+  requireFullSize = true,
+  loading = false,
+  allowUnverifiedSelection = false,
+}: Props) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   // Per-device typed acknowledgements (device string → granted)
   const [ackGranted, setAckGranted] = useState<Set<string>>(new Set());
   // View: 'list' shows the drive list; 'review' shows the selection review panel
   const [view, setView] = useState<'list' | 'review'>('list');
 
-  const safeDrives = devices.filter(d => classifyDrive(d, requireFullSize).tier === 'safe');
-  const suspiciousDrives = devices.filter(d => classifyDrive(d, requireFullSize).tier === 'suspicious');
-  const blockedDrives = devices.filter(d => classifyDrive(d, requireFullSize).tier === 'blocked');
+  const safeDrives = devices.filter(d => classifyDrive(d, requireFullSize, { allowUnverifiedSelection }).tier === 'safe');
+  const suspiciousDrives = devices.filter(d => classifyDrive(d, requireFullSize, { allowUnverifiedSelection }).tier === 'suspicious');
+  const blockedDrives = devices.filter(d => classifyDrive(d, requireFullSize, { allowUnverifiedSelection }).tier === 'blocked');
 
   const selectedDrive = devices.find(d => d.device === selected);
   const selectedDriveStillPresent = !selected || devices.some(d => d.device === selected);
@@ -799,6 +855,7 @@ export default function UsbStep({ devices, selected, backupPolicy = null, onSele
         onConfirm={handleConfirm}
         confirmBusy={confirmDriveBusy}
         requireFullSize={requireFullSize}
+        allowUnverifiedSelection={allowUnverifiedSelection}
       />
     );
   }
@@ -807,7 +864,9 @@ export default function UsbStep({ devices, selected, backupPolicy = null, onSele
     <div className="space-y-6">
       <div>
         <h2 className="text-4xl font-bold text-white mb-2">Select a USB Drive</h2>
-        <p className="text-[#888888] font-medium text-sm">Choose a removable USB drive.</p>
+        <p className="text-[#888888] font-medium text-sm">
+          {loading ? 'Detecting USB drives…' : 'Choose a removable USB drive.'}
+        </p>
       </div>
 
       {/* Erasure warning */}
@@ -830,9 +889,10 @@ export default function UsbStep({ devices, selected, backupPolicy = null, onSele
           </p>
           <button
             onClick={onRefresh}
-            className="flex items-center gap-2 px-5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs font-bold text-white hover:bg-white/10 transition-all cursor-pointer"
+            disabled={loading}
+            className="flex items-center gap-2 px-5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs font-bold text-white hover:bg-white/10 transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            <RefreshCcw className="w-3.5 h-3.5" /> Refresh
+            <RefreshCcw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Detecting…' : 'Refresh'}
           </button>
         </div>
       ) : (
@@ -863,6 +923,7 @@ export default function UsbStep({ devices, selected, backupPolicy = null, onSele
               beginnerBlocked={false}
               advancedAckGranted={false}
               requireFullSize={requireFullSize}
+              allowUnverifiedSelection={allowUnverifiedSelection}
             />
           ))}
 
@@ -876,6 +937,7 @@ export default function UsbStep({ devices, selected, backupPolicy = null, onSele
               beginnerBlocked={true}
               advancedAckGranted={false}
               requireFullSize={requireFullSize}
+              allowUnverifiedSelection={allowUnverifiedSelection}
             />
           ))}
 
@@ -889,14 +951,16 @@ export default function UsbStep({ devices, selected, backupPolicy = null, onSele
               beginnerBlocked={false}
               advancedAckGranted={false}
               requireFullSize={requireFullSize}
+              allowUnverifiedSelection={allowUnverifiedSelection}
             />
           ))}
 
           <button
             onClick={onRefresh}
-            className="w-full flex items-center justify-center gap-2 py-3 text-xs text-[#555555] hover:text-[#888888] transition-colors cursor-pointer"
+            disabled={loading}
+            className="w-full flex items-center justify-center gap-2 py-3 text-xs text-[#555555] hover:text-[#888888] transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            <RefreshCcw className="w-3 h-3" /> Refresh drive list
+            <RefreshCcw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Detecting drives…' : 'Refresh drive list'}
           </button>
 
           {/* Advanced devices disclosure — beginner mode only, when suspicious drives exist */}
