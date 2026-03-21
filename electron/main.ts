@@ -73,6 +73,11 @@ import { sim } from './simulation.js';
 import { getCompatModeConfigPath, getPackagedRendererEntryPath, getPreloadScriptPath } from './runtimePaths.js';
 import { runEfiBuildFlow } from './efiBuildFlow.js';
 import {
+  APPLE_RECOVERY_MLB_ZERO,
+  buildAppleRecoveryDownloadHeaders,
+  queryAppleRecoveryAssets,
+} from './appleRecovery.js';
+import {
   buildStartupFailurePageUrl,
   determineDidFailLoadAction,
   describeStartupFailure,
@@ -233,6 +238,7 @@ async function downloadFileWithProgress(
   onProgress: (downloaded: number, total: number) => void,
   startOffset = 0,
   checkAborted?: () => void,
+  extraHeaders?: Record<string, string>,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const CONNECT_TIMEOUT_MS = 30_000;
@@ -242,7 +248,10 @@ async function downloadFileWithProgress(
       if (redirects > 10) { reject(new Error('Too many redirects')); return; }
       const parsedUrl = new URL(urlStr);
       const lib = parsedUrl.protocol === 'https:' ? https : http;
-      const headers: Record<string, string | number> = { 'User-Agent': 'InternetRecovery/1.0' };
+      const headers: Record<string, string | number> = {
+        'User-Agent': 'InternetRecovery/1.0',
+        ...(extraHeaders ?? {}),
+      };
       if (startOffset > 0) {
         headers['Range'] = `bytes=${startOffset}-`;
       }
@@ -3019,39 +3028,7 @@ app.whenReady().then(async () => {
   // Equivalent to Dortania macrecovery.py but implemented in pure Node.js
   // ─────────────────────────────────────────────────────────────────
 
-  function generateRealisticSerial(smbios: string): string {
-    // Standard Apple Serial format (12 chars): PPP Y W SSS CCCC
-    // We use common prefixes and model codes to satisfy osrecovery filters.
-    const prefixes = ['C02', 'C07', 'F4K', 'D25', 'G6G', 'H29'];
-    const modelCodes: Record<string, string> = {
-      'iMac20,1':       'PN5T',
-      'iMac20,2':       'PN5V',
-      'iMac19,1':       'JV3Q',
-      'iMac19,2':       'JV3R',
-      'MacBookPro16,1': 'PG8W',
-      'MacBookPro16,2': 'PXNV',
-      'MacBookPro15,1': 'JG5H',
-      'MacBookAir9,1':  'PFWP',
-      'MacPro7,1':      'P7QM',
-      'Macmini8,1':     'JYVX',
-      'MacBookPro14,1': 'HV24',
-    };
-
-    const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
-    const modelCode = modelCodes[smbios] || modelCodes['iMac20,1'] || 'PN5T';
-    // Year (G-N) + Week (1-9,C,D,F,G,H,K-N,P,Q,R,T,V,W,X,Y)
-    const yearChars = 'GHJKLMNP';
-    const weekChars = '123456789CDFGHKMNPQRTVWXY';
-    const year = yearChars[Math.floor(Math.random() * yearChars.length)];
-    const week = weekChars[Math.floor(Math.random() * weekChars.length)];
-    const randomChars = 'ABCDEFGHJKLMNPQRSTUVWXYZ0123456789';
-    let rand = '';
-    for (let i = 0; i < 3; i++) rand += randomChars[Math.floor(Math.random() * randomChars.length)];
-
-    return `${prefix}${year}${week}${rand}${modelCode}`.substring(0, 12);
-  }
-
-  async function appleRecoveryQuery(boardId: string, smbios: string): Promise<{ dmgUrl: string; chunklistUrl: string }> {
+  async function appleRecoveryQuery(boardId: string): Promise<{ dmgUrl: string; dmgToken: string; chunklistUrl: string; chunklistToken: string }> {
     const MAX_ATTEMPTS = 3;
     // Escalating delays: immediate, 3s, 8s
     const RETRY_DELAYS = [0, 3000, 8000];
@@ -3060,12 +3037,9 @@ app.whenReady().then(async () => {
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       recoveryStats.attempts = attempt;
-      // Fresh serial each attempt — avoid repeat rejection of same serial
-      const sn = generateRealisticSerial(smbios);
-      const postData = `cid=3&sn=${sn}&bid=${boardId}&k=0&nonce=&fg=0x10`;
 
       try {
-        log('INFO', 'recovery', `Apple recovery query attempt ${attempt}/${MAX_ATTEMPTS}`, { smbios, sn: sn.substring(0, 6) + '...' });
+        log('INFO', 'recovery', `Apple recovery query attempt ${attempt}/${MAX_ATTEMPTS}`, { boardId, mlb: APPLE_RECOVERY_MLB_ZERO });
 
         // Escalating delay before retries
         const delay = RETRY_DELAYS[attempt - 1] || 0;
@@ -3074,65 +3048,21 @@ app.whenReady().then(async () => {
           await new Promise(r => setTimeout(r, delay));
         }
 
-        const result = await new Promise<{ dmgUrl: string; chunklistUrl: string }>((resolve, reject) => {
-          const req = https.request({
-            hostname: 'osrecovery.apple.com',
-            path: '/InstallationPayload/RecoveryImage',
-            method: 'POST',
-            headers: {
-              'Host': 'osrecovery.apple.com',
-              'User-Agent': 'com.apple.recovery.boot/1.0',
-              'Content-Type': 'text/plain',
-              'Content-Length': String(Buffer.byteLength(postData)),
-              'Accept': '*/*',
-              'Cache-Control': 'no-cache',
-              'Connection': 'close',
-            },
-            timeout: 15000,
-          }, (res) => {
-            let raw = '';
-            res.on('data', (c: Buffer) => raw += c);
-            res.on('end', () => {
-              recoveryStats.lastHttpCode = res.statusCode ?? null;
-              if (res.statusCode === 401 || res.statusCode === 403) {
-                reject(new Error(`APPLE_AUTH_REJECT:${res.statusCode}`));
-                return;
-              }
-              if (res.statusCode === 429) {
-                reject(new Error(`APPLE_RATE_LIMIT:429`));
-                return;
-              }
-              if ((res.statusCode ?? 0) >= 500) {
-                reject(new Error(`APPLE_SERVER_ERROR:${res.statusCode}`));
-                return;
-              }
-              if (res.statusCode !== 200) {
-                reject(new Error(`APPLE_HTTP:${res.statusCode}`));
-                return;
-              }
-              const params: Record<string, string> = {};
-              for (const line of raw.split('\n')) {
-                const eqIdx = line.indexOf('=');
-                if (eqIdx > 0) params[line.slice(0, eqIdx).trim()] = line.slice(eqIdx + 1).trim();
-              }
-              const dmgUrl = params['AU'] || params['AssetURL'] || params['URL'];
-              const chunklistUrl = params['CL'] || params['ChunklistURL'] || params['Chunklist'];
-              if (dmgUrl) resolve({ dmgUrl, chunklistUrl: chunklistUrl || '' });
-              else reject(new Error('APPLE_EMPTY_RESPONSE'));
-            });
-          });
-          req.on('error', (err) => reject(new Error(`CONN_ERR:${err.message}`)));
-          req.on('timeout', () => { req.destroy(); reject(new Error('CONN_ERR:timeout')); });
-          req.write(postData);
-          req.end();
+        const result = await queryAppleRecoveryAssets({
+          boardId,
+          mlb: APPLE_RECOVERY_MLB_ZERO,
+          osType: 'default',
         });
 
         log('INFO', 'recovery', `Apple recovery query succeeded on attempt ${attempt}`);
         recoveryStats.finalDecision = 'apple_official';
+        recoveryStats.lastHttpCode = 200;
         return result;
 
       } catch (e: any) {
         recoveryStats.lastError = e.message;
+        const match = e.message.match(/:(\d{3})$/);
+        recoveryStats.lastHttpCode = match ? Number(match[1]) : recoveryStats.lastHttpCode;
         const isRetryable = e.message.startsWith('APPLE_AUTH_REJECT') ||
                             e.message.startsWith('APPLE_RATE_LIMIT') ||
                             e.message.startsWith('APPLE_SERVER_ERROR') ||
@@ -3258,8 +3188,7 @@ app.whenReady().then(async () => {
         clDest
       });
 
-      const smbios = lastHardwareProfile?.smbios || 'iMac19,1';
-      const urls = await withTimeout(appleRecoveryQuery(boardId, smbios), 30_000, 'appleRecoveryQuery');
+      const urls = await withTimeout(appleRecoveryQuery(boardId), 30_000, 'appleRecoveryQuery');
 
       // 3. Download to cache
       await downloadFileWithProgress(urls.dmgUrl, dmgDest, (downloaded, total) => {
@@ -3274,10 +3203,10 @@ app.whenReady().then(async () => {
           dmgDest,
           clDest
         });
-      }, effectiveOffset, () => token.check());
+      }, effectiveOffset, () => token.check(), buildAppleRecoveryDownloadHeaders(urls.dmgToken));
 
       if (urls.chunklistUrl && !fs.existsSync(clDest)) {
-        await downloadFileWithProgress(urls.chunklistUrl, clDest, () => {}, 0, () => token.check());
+        await downloadFileWithProgress(urls.chunklistUrl, clDest, () => {}, 0, () => token.check(), buildAppleRecoveryDownloadHeaders(urls.chunklistToken));
       }
 
       // 4. Finalise cache and copy to EFI

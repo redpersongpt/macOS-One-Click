@@ -5,11 +5,20 @@ import { Usb, HardDrive, ChevronRight, Info } from 'lucide-react';
 interface Props {
   onSelect: (method: 'usb' | 'partition') => void;
   onBack: () => void;
+  platform?: string;
 }
 
-export default function MethodStep({ onSelect, onBack }: Props) {
+export default function MethodStep({ onSelect, onBack, platform = 'unknown' }: Props) {
   const [hardDrives, setHardDrives] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const isWindows = platform === 'win32';
+  const helperUrl = isWindows
+    ? 'https://github.com/corpnewt/UnPlugged'
+    : 'https://dortania.github.io/OpenCore-Install-Guide/installer-guide/';
+  const helperLabel = isWindows ? 'Open UnPlugged' : 'Open Installer Guide';
+  const helperText = isWindows
+    ? 'OpCore-Simplify hands Windows users off to UnPlugged after EFI creation. If you already have a valid EFI here, you can use the same external-installer path.'
+    : 'OpCore-Simplify separates EFI creation from installer-media creation. If you want to prepare installer media outside this app, use the OpenCore installer guide.';
 
   useEffect(() => {
     (async () => {
@@ -83,6 +92,23 @@ export default function MethodStep({ onSelect, onBack }: Props) {
             This option changes your existing disk layout and is less forgiving than a removable USB workflow. Back up important data first.
           </p>
         </div>
+      </div>
+
+      <div className="p-5 rounded-2xl bg-blue-500/5 border border-blue-500/10 flex items-start justify-between gap-4">
+        <div className="space-y-1">
+          <p className="text-xs font-bold text-blue-200/90 uppercase tracking-widest">External Installer Path</p>
+          <p className="text-xs text-blue-200/55 leading-relaxed">
+            {helperText}
+          </p>
+        </div>
+        <a
+          href={helperUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="px-3 py-2 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs font-bold text-blue-300 hover:bg-blue-500/15 transition-all shrink-0"
+        >
+          {helperLabel}
+        </a>
       </div>
     </div>
   );

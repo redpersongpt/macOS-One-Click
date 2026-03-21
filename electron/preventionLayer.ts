@@ -8,6 +8,7 @@ import * as net from 'net';
 import * as tls from 'tls';
 import * as fs from 'fs';
 import * as os from 'os';
+import { probeAppleRecoveryEndpoint } from './appleRecovery.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -265,34 +266,16 @@ function checkDiskHealth(targetDir?: string): DiskHealthCheck {
 
 function probeAppleRecovery(): Promise<RecoveryEndpointCheck> {
   const start = Date.now();
-  return new Promise((resolve) => {
-    const req = https.request({
-      hostname: 'osrecovery.apple.com',
-      path: '/InstallationPayload/RecoveryImage',
-      method: 'POST',
-      headers: {
-        'Host': 'osrecovery.apple.com',
-        'User-Agent': 'com.apple.recovery.boot/1.0',
-        'Content-Type': 'text/plain',
-        'Content-Length': '0',
-      },
-      timeout: 10000,
-    }, (res) => {
-      res.destroy();
-      // 200 = success, 400 = bad request (expected with empty body) = server is alive
-      // 401/403 = auth rejected but server reachable
-      // 5xx = server down
-      const code = res.statusCode ?? 0;
-      resolve({
-        reachable: code < 500,
-        latencyMs: Date.now() - start,
-        httpCode: code,
-      });
-    });
-    req.on('error', (e) => resolve({ reachable: false, latencyMs: Date.now() - start, error: e.message }));
-    req.on('timeout', () => { req.destroy(); resolve({ reachable: false, latencyMs: 10000, error: 'timeout' }); });
-    req.end('');
-  });
+  return probeAppleRecoveryEndpoint().then((result) => ({
+    reachable: result.reachable && Boolean(result.sessionCookie),
+    latencyMs: Date.now() - start,
+    httpCode: result.httpCode ?? undefined,
+    error: result.reachable && !result.sessionCookie ? 'missing_session_cookie' : undefined,
+  })).catch((error: any) => ({
+    reachable: false,
+    latencyMs: Date.now() - start,
+    error: error?.message ?? 'unknown_error',
+  }));
 }
 
 // ── Confidence Computation ───────────────────────────────────────────────────

@@ -8,6 +8,7 @@ import * as https from 'https';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { queryAppleRecoveryAssets } from './appleRecovery.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -325,127 +326,54 @@ function extractOSVersionKey(targetOS: string): string {
   return m ? m[1] : '15';
 }
 
-function generateTestSerial(smbios: string): string {
-  // Minimal serial for dry-run test — same logic as production but not cached
-  const prefix = smbios.startsWith('MacBookPro') ? 'C02' : 'C07';
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ0123456789';
-  let serial = prefix;
-  for (let i = 0; i < 9; i++) serial += chars[Math.floor(Math.random() * chars.length)];
-  return serial;
-}
-
 export async function dryRunRecovery(
   targetOS: string,
-  smbios: string,
+  _smbios: string,
 ): Promise<RecoveryDryRun> {
   const versionKey = extractOSVersionKey(targetOS);
   const boardId = BOARD_IDS[versionKey] || BOARD_IDS['15'];
-  const sn = generateTestSerial(smbios);
-  const postData = `cid=3&sn=${sn}&bid=${boardId}&k=0&nonce=&fg=0x10`;
-
-  return new Promise((resolve) => {
-    const req = https.request({
-      hostname: 'osrecovery.apple.com',
-      path: '/InstallationPayload/RecoveryImage',
-      method: 'POST',
-      headers: {
-        'Host': 'osrecovery.apple.com',
-        'User-Agent': 'com.apple.recovery.boot/1.0',
-        'Content-Type': 'text/plain',
-        'Content-Length': String(Buffer.byteLength(postData)),
-      },
-      timeout: 15000,
-    }, (res) => {
-      let data = '';
-      res.on('data', (c: Buffer) => data += c);
-      res.on('end', () => {
-        const code = res.statusCode ?? 0;
-
-        if (code === 200 && (data.includes('oscdn.apple.com') || data.includes('AssetURL') || data.includes('URL'))) {
-          resolve({
-            timestamp: new Date().toISOString(),
-            targetOS,
-            boardId,
-            endpointReachable: true,
-            testRequestResult: 'success',
-            httpCode: code,
-            certainty: 'will_succeed',
-            recommendation: 'Recovery download is expected to succeed.',
-          });
-          return;
-        }
-
-        if (code === 401 || code === 403) {
-          resolve({
-            timestamp: new Date().toISOString(),
-            targetOS,
-            boardId,
-            endpointReachable: true,
-            testRequestResult: 'auth_rejected',
-            httpCode: code,
-            certainty: 'will_fail',
-            recommendation: `Apple rejected the test request (HTTP ${code}). This macOS version will likely fail. Try Monterey or Big Sur, or use manual import.`,
-          });
-          return;
-        }
-
-        if (code >= 500) {
-          resolve({
-            timestamp: new Date().toISOString(),
-            targetOS,
-            boardId,
-            endpointReachable: true,
-            testRequestResult: 'server_error',
-            httpCode: code,
-            certainty: 'will_fail',
-            recommendation: 'Apple recovery servers are having issues. Try again later.',
-          });
-          return;
-        }
-
-        // Other status — ambiguous
-        resolve({
-          timestamp: new Date().toISOString(),
-          targetOS,
-          boardId,
-          endpointReachable: true,
-          testRequestResult: data.length > 50 ? 'success' : 'auth_rejected',
-          httpCode: code,
-          certainty: data.length > 50 ? 'may_fail' : 'will_fail',
-          recommendation: data.length > 50
-            ? 'Response received but structure unclear. Recovery may work.'
-            : `Server returned HTTP ${code} with minimal data. Recovery will likely fail.`,
-        });
-      });
-      res.on('error', () => {
-        resolve({
-          timestamp: new Date().toISOString(),
-          targetOS,
-          boardId,
-          endpointReachable: false,
-          testRequestResult: 'unreachable',
-          httpCode: null,
-          certainty: 'will_fail',
-          recommendation: 'Apple recovery server is unreachable. Check network or use manual import.',
-        });
-      });
-    });
-
-    req.on('error', () => {
-      resolve({
+  try {
+    await queryAppleRecoveryAssets({ boardId, osType: 'default' });
+    return {
+      timestamp: new Date().toISOString(),
+      targetOS,
+      boardId,
+      endpointReachable: true,
+      testRequestResult: 'success',
+      httpCode: 200,
+      certainty: 'will_succeed',
+      recommendation: 'Recovery download is expected to succeed.',
+    };
+  } catch (error: any) {
+    const message = error?.message ?? 'unknown';
+    if (message.startsWith('APPLE_AUTH_REJECT')) {
+      const match = message.match(/:(\d{3})$/);
+      return {
         timestamp: new Date().toISOString(),
         targetOS,
         boardId,
-        endpointReachable: false,
-        testRequestResult: 'unreachable',
-        httpCode: null,
+        endpointReachable: true,
+        testRequestResult: 'auth_rejected',
+        httpCode: match ? Number(match[1]) : null,
         certainty: 'will_fail',
-        recommendation: 'Apple recovery server is unreachable. Check network or use manual import.',
-      });
-    });
-    req.on('timeout', () => {
-      req.destroy();
-      resolve({
+        recommendation: `Apple rejected the recovery request (HTTP ${match ? Number(match[1]) : 'unknown'}). This target will likely fail until the request shape is corrected or Apple changes policy.`,
+      };
+    }
+    if (message.startsWith('APPLE_SERVER_ERROR') || message.startsWith('APPLE_HTTP')) {
+      const match = message.match(/:(\d{3})$/);
+      return {
+        timestamp: new Date().toISOString(),
+        targetOS,
+        boardId,
+        endpointReachable: true,
+        testRequestResult: 'server_error',
+        httpCode: match ? Number(match[1]) : null,
+        certainty: 'will_fail',
+        recommendation: 'Apple recovery servers returned a non-success response. Retry later if the service is degraded.',
+      };
+    }
+    if (message.includes('timeout')) {
+      return {
         timestamp: new Date().toISOString(),
         targetOS,
         boardId,
@@ -453,11 +381,20 @@ export async function dryRunRecovery(
         testRequestResult: 'timeout',
         httpCode: null,
         certainty: 'may_fail',
-        recommendation: 'Apple server timed out. Network may be slow — recovery could still work but is not guaranteed.',
-      });
-    });
-    req.end(postData);
-  });
+        recommendation: 'Apple server timed out. Network may be slow, but the request path is otherwise valid.',
+      };
+    }
+    return {
+      timestamp: new Date().toISOString(),
+      targetOS,
+      boardId,
+      endpointReachable: false,
+      testRequestResult: 'unreachable',
+      httpCode: null,
+      certainty: 'will_fail',
+      recommendation: 'Apple recovery server is unreachable. Check network or use manual import.',
+    };
+  }
 }
 
 // ─── Phase 3: Guaranteed State Verification ─────────────────────────────────

@@ -2930,7 +2930,7 @@ export default function App() {
                 {/* METHOD SELECT */}
                 {step === 'method-select' && (
                   <motion.div key="meth" initial={stepEnter} animate={stepActive} exit={stepExit} transition={STEP_TRANSITION} className="h-full">
-                    <MethodStep onSelect={selectMethod} onBack={() => setStep('recovery-download')} />
+                    <MethodStep onSelect={selectMethod} onBack={() => setStep('recovery-download')} platform={platform} />
                   </motion.div>
                 )}
 
