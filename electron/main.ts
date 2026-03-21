@@ -787,7 +787,7 @@ async function ensureOpenCoreBinaries(
       path.resolve(basePath, 'EFI/OC/OpenCore.efi'),
       path.resolve(basePath, 'EFI/BOOT/BOOTx64.efi'),
       path.resolve(basePath, 'EFI/OC/Drivers/OpenRuntime.efi'),
-      path.resolve(basePath, 'EFI/OC/Drivers/HfsPlus.efi'),
+      path.resolve(basePath, 'EFI/OC/Drivers/OpenHfsPlus.efi'),
     ];
     for (const file of versionedFiles) {
       if (fs.existsSync(file)) {

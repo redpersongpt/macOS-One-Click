@@ -71,7 +71,7 @@ function inferIssueSource(
     issue.component === 'OpenCore.efi' ||
     issue.component === 'BOOTx64.efi' ||
     issue.component === 'OpenRuntime.efi' ||
-    issue.component === 'HfsPlus.efi' ||
+    issue.component === 'OpenHfsPlus.efi' ||
     issue.component === 'config.plist' ||
     issue.component === 'Drivers directory' ||
     issue.component === 'Kexts directory' ||
@@ -278,9 +278,10 @@ export async function validateEfi(
   const requiredFiles = [
     { rel: 'EFI/OC/config.plist',  label: 'config.plist', minSize: 500 },
     { rel: 'EFI/OC/OpenCore.efi',  label: 'OpenCore.efi', minSize: 100 * 1024 },
-    { rel: 'EFI/BOOT/BOOTx64.efi', label: 'BOOTx64.efi', minSize: 30 * 1024 },
-    { rel: 'EFI/OC/Drivers/OpenRuntime.efi', label: 'OpenRuntime.efi', minSize: 30 * 1024 },
-    { rel: 'EFI/OC/Drivers/HfsPlus.efi', label: 'HfsPlus.efi', minSize: 30 * 1024 },
+    // OpenCore 1.0.3 ships BOOTx64.efi and OpenRuntime.efi at 24 KB.
+    { rel: 'EFI/BOOT/BOOTx64.efi', label: 'BOOTx64.efi', minSize: 20 * 1024 },
+    { rel: 'EFI/OC/Drivers/OpenRuntime.efi', label: 'OpenRuntime.efi', minSize: 20 * 1024 },
+    { rel: 'EFI/OC/Drivers/OpenHfsPlus.efi', label: 'OpenHfsPlus.efi', minSize: 30 * 1024 },
   ];
 
   for (const { rel, label, minSize } of requiredFiles) {
@@ -610,7 +611,7 @@ export async function validateEfi(
   const openCoreVersion = await readVersionSidecar(path.join(efiPath, 'EFI/OC/OpenCore.efi'));
   const bootVersion = await readVersionSidecar(path.join(efiPath, 'EFI/BOOT/BOOTx64.efi'));
   const openRuntimeVersion = await readVersionSidecar(path.join(efiPath, 'EFI/OC/Drivers/OpenRuntime.efi'));
-  const hfsPlusVersion = await readVersionSidecar(path.join(efiPath, 'EFI/OC/Drivers/HfsPlus.efi'));
+  const hfsPlusVersion = await readVersionSidecar(path.join(efiPath, 'EFI/OC/Drivers/OpenHfsPlus.efi'));
 
   if (openCoreVersion && bootVersion && openCoreVersion !== bootVersion) {
     issues.push(blocked(
@@ -637,9 +638,9 @@ export async function validateEfi(
   if (openCoreVersion && hfsPlusVersion && openCoreVersion !== hfsPlusVersion) {
     issues.push(warning(
       'HFSPPLUS_VERSION_MISMATCH',
-      'HfsPlus.efi does not match the OpenCore marker set',
-      'HfsPlus.efi',
-      'EFI/OC/Drivers/HfsPlus.efi',
+      'OpenHfsPlus.efi does not match the OpenCore marker set',
+      'OpenHfsPlus.efi',
+      'EFI/OC/Drivers/OpenHfsPlus.efi',
       `Version marker mismatch: OpenCore ${openCoreVersion} vs HfsPlus ${hfsPlusVersion}`,
       null,
     ));

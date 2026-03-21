@@ -574,7 +574,7 @@ export function verifyEfiBuildSuccess(efiPath: string, requiredKexts: string[]):
   let bootOk = false;
   try {
     const stat = fs.statSync(bootPath);
-    bootOk = stat.size > 30 * 1024;
+    bootOk = stat.size > 20 * 1024;
     checks.push({ name: 'BOOTx64.efi', passed: bootOk, detail: `${Math.round(stat.size / 1024)} KB` });
   } catch {
     checks.push({ name: 'BOOTx64.efi', passed: false, detail: 'File not found' });

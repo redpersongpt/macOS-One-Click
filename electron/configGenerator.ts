@@ -892,7 +892,7 @@ export function generateConfigPlist(profile: HardwareProfile): string {
                 <key>Arguments</key><string></string>
                 <key>Comment</key><string>HFS+ Driver</string>
                 <key>Enabled</key><true/>
-                <key>Path</key><string>HfsPlus.efi</string>
+                <key>Path</key><string>OpenHfsPlus.efi</string>
             </dict>
             <dict>
                 <key>Arguments</key><string></string>

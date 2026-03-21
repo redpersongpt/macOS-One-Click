@@ -78,7 +78,7 @@ function makeTempDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), `release-qa-${prefix}-`));
 }
 
-function basePlist(kernelAdd = '', drivers = '<dict><key>Enabled</key><true/><key>Path</key><string>HfsPlus.efi</string></dict><dict><key>Enabled</key><true/><key>Path</key><string>OpenRuntime.efi</string></dict>'): string {
+function basePlist(kernelAdd = '', drivers = '<dict><key>Enabled</key><true/><key>Path</key><string>OpenHfsPlus.efi</string></dict><dict><key>Enabled</key><true/><key>Path</key><string>OpenRuntime.efi</string></dict>'): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -123,9 +123,9 @@ function writeBaseEfi(root: string) {
   fs.mkdirSync(path.join(root, 'EFI/OC/ACPI'), { recursive: true });
   fs.writeFileSync(path.join(root, 'EFI/OC/config.plist'), basePlist());
   fs.writeFileSync(path.join(root, 'EFI/OC/OpenCore.efi'), Buffer.alloc(120 * 1024, 1));
-  fs.writeFileSync(path.join(root, 'EFI/BOOT/BOOTx64.efi'), Buffer.alloc(40 * 1024, 1));
-  fs.writeFileSync(path.join(root, 'EFI/OC/Drivers/OpenRuntime.efi'), Buffer.alloc(40 * 1024, 1));
-  fs.writeFileSync(path.join(root, 'EFI/OC/Drivers/HfsPlus.efi'), Buffer.alloc(40 * 1024, 1));
+  fs.writeFileSync(path.join(root, 'EFI/BOOT/BOOTx64.efi'), Buffer.alloc(24 * 1024, 1));
+  fs.writeFileSync(path.join(root, 'EFI/OC/Drivers/OpenRuntime.efi'), Buffer.alloc(24 * 1024, 1));
+  fs.writeFileSync(path.join(root, 'EFI/OC/Drivers/OpenHfsPlus.efi'), Buffer.alloc(40 * 1024, 1));
 }
 
 describe('Release compatibility break flows', () => {
@@ -159,14 +159,14 @@ describe('Release compatibility break flows', () => {
 });
 
 describe('Release validation break flows', () => {
-  test('missing HfsPlus.efi hard-blocks validation', async () => {
+  test('missing OpenHfsPlus.efi hard-blocks validation', async () => {
     const dir = makeTempDir('hfsplus');
     try {
       writeBaseEfi(dir);
-      fs.rmSync(path.join(dir, 'EFI/OC/Drivers/HfsPlus.efi'));
+      fs.rmSync(path.join(dir, 'EFI/OC/Drivers/OpenHfsPlus.efi'));
       const result = await validateEfi(dir, makeProfile(), {});
       assert.equal(result.overall, 'blocked');
-      assert.ok(result.issues.some(issue => issue.expectedPath === 'EFI/OC/Drivers/HfsPlus.efi'));
+      assert.ok(result.issues.some(issue => issue.expectedPath === 'EFI/OC/Drivers/OpenHfsPlus.efi'));
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

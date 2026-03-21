@@ -78,7 +78,7 @@ export function buildResourcePlan(input: {
     });
   }
 
-  for (const driver of ['OpenRuntime.efi', 'HfsPlus.efi']) {
+  for (const driver of ['OpenRuntime.efi', 'OpenHfsPlus.efi']) {
     resources.push({
       name: driver,
       kind: 'driver',

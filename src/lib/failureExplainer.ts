@@ -45,8 +45,8 @@ const CODE_EXPLANATIONS: Record<string, Omit<ExplainedFailure, 'severity'>> = {
     category: 'missing_file',
   },
   MISSING_HFSPLUS: {
-    headline: 'Missing HfsPlus.efi',
-    explanation: 'HfsPlus.efi allows OpenCore to read HFS+ volumes. The macOS Recovery partition uses HFS+ format.',
+    headline: 'Missing OpenHfsPlus.efi',
+    explanation: 'OpenHfsPlus.efi allows OpenCore to read HFS+ volumes. The macOS Recovery partition uses HFS+ format.',
     impact: 'OpenCore cannot read the macOS Recovery image on the USB drive. The installer will not appear in the boot picker.',
     action: 'Rebuild the EFI if you need Recovery/Installer support. If using an EFI-only setup, this may be acceptable.',
     category: 'missing_file',

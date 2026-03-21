@@ -89,7 +89,7 @@ ${kernelAddEntries}
         <key>Enabled</key>
         <true/>
         <key>Path</key>
-        <string>HfsPlus.efi</string>
+        <string>OpenHfsPlus.efi</string>
       </dict>
       <dict>
         <key>Enabled</key>
@@ -135,16 +135,16 @@ function writeMinimalEfi(root: string, opts: {
     fs.writeFileSync(path.join(root, 'EFI/OC/OpenCore.efi.version'), '1.0.3');
   }
   if (includeBoot) {
-    fs.writeFileSync(path.join(root, 'EFI/BOOT/BOOTx64.efi'), Buffer.alloc(40 * 1024, 1));
+    fs.writeFileSync(path.join(root, 'EFI/BOOT/BOOTx64.efi'), Buffer.alloc(24 * 1024, 1));
     fs.writeFileSync(path.join(root, 'EFI/BOOT/BOOTx64.efi.version'), '1.0.3');
   }
   if (includeOpenRuntime) {
-    fs.writeFileSync(path.join(root, 'EFI/OC/Drivers/OpenRuntime.efi'), Buffer.alloc(40 * 1024, 1));
+    fs.writeFileSync(path.join(root, 'EFI/OC/Drivers/OpenRuntime.efi'), Buffer.alloc(24 * 1024, 1));
     fs.writeFileSync(path.join(root, 'EFI/OC/Drivers/OpenRuntime.efi.version'), '1.0.3');
   }
   if (includeHfsPlus) {
-    fs.writeFileSync(path.join(root, 'EFI/OC/Drivers/HfsPlus.efi'), Buffer.alloc(40 * 1024, 1));
-    fs.writeFileSync(path.join(root, 'EFI/OC/Drivers/HfsPlus.efi.version'), '1.0.3');
+    fs.writeFileSync(path.join(root, 'EFI/OC/Drivers/OpenHfsPlus.efi'), Buffer.alloc(40 * 1024, 1));
+    fs.writeFileSync(path.join(root, 'EFI/OC/Drivers/OpenHfsPlus.efi.version'), '1.0.3');
   }
 }
 
@@ -458,7 +458,7 @@ describe('EFI validator', () => {
   <dict>
     <key>Drivers</key>
     <array>
-      <dict><key>Enabled</key><true/><key>Path</key><string>HfsPlus.efi</string></dict>
+      <dict><key>Enabled</key><true/><key>Path</key><string>OpenHfsPlus.efi</string></dict>
       <dict><key>Enabled</key><true/><key>Path</key><string>OpenRuntime.efi</string></dict>
     </array>
   </dict>
