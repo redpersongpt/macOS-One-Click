@@ -73,6 +73,18 @@ function resolveCpuVendor(vendorStr: string, rawName: string): { vendor: string;
   return { vendor: vendorStr || 'Unknown', vendorName: 'Unknown' };
 }
 
+export const WINDOWS_HARDWARE_QUERIES = {
+  cpuName: '(Get-CimInstance Win32_Processor).Name',
+  cpuVendor: '(Get-CimInstance Win32_Processor).Manufacturer',
+  gpuJson: 'Get-CimInstance Win32_VideoController | Select-Object Name, PNPDeviceID | ConvertTo-Json -Compress',
+  boardJson: 'Get-CimInstance Win32_BaseBoard | Select-Object Manufacturer, Product | ConvertTo-Json -Compress',
+  chassisTypes: '(Get-CimInstance Win32_SystemEnclosure).ChassisTypes',
+  manufacturer: '(Get-CimInstance Win32_ComputerSystem).Manufacturer',
+  model: '(Get-CimInstance Win32_ComputerSystem).Model',
+  batteryJson: 'Get-CimInstance Win32_Battery | Select-Object -First 1 | ConvertTo-Json -Compress',
+  coreCount: '(Get-CimInstance Win32_Processor).NumberOfCores',
+} as const;
+
 // ── Windows ───────────────────────────────────────────────────────────────────
 
 export async function detectWindowsHardware(): Promise<DetectedHardware> {
@@ -83,16 +95,16 @@ export async function detectWindowsHardware(): Promise<DetectedHardware> {
     }).catch(() => ({ stdout: fallback }));
 
   const [cpuRes, cpuVendorRes, gpuRes, boardRes, chassisRes, manufRes, modelRes, batteryRes, coresRes] = await Promise.all([
-    ps('(Get-CimInstance CIM_Processor).Name', 'Unknown CPU'),
-    ps('(Get-CimInstance CIM_Processor).Manufacturer'),
+    ps(WINDOWS_HARDWARE_QUERIES.cpuName, 'Unknown CPU'),
+    ps(WINDOWS_HARDWARE_QUERIES.cpuVendor),
     // PNPDeviceID gives "PCI\\VEN_10DE&DEV_2484&..." — extract vendor+device IDs
-    ps('Get-CimInstance CIM_VideoController | Select-Object Name, PNPDeviceID | ConvertTo-Json -Compress'),
-    ps('Get-CimInstance Win32_BaseBoard | Select-Object Manufacturer, Product | ConvertTo-Json -Compress'),
-    ps('(Get-CimInstance CIM_SystemEnclosure).ChassisTypes'),
-    ps('(Get-CimInstance CIM_ComputerSystem).Manufacturer'),
-    ps('(Get-CimInstance CIM_ComputerSystem).Model'),
-    ps('Get-CimInstance Win32_Battery | Select-Object -First 1 | ConvertTo-Json -Compress'),
-    ps('(Get-CimInstance CIM_Processor).NumberOfCores'),
+    ps(WINDOWS_HARDWARE_QUERIES.gpuJson),
+    ps(WINDOWS_HARDWARE_QUERIES.boardJson),
+    ps(WINDOWS_HARDWARE_QUERIES.chassisTypes),
+    ps(WINDOWS_HARDWARE_QUERIES.manufacturer),
+    ps(WINDOWS_HARDWARE_QUERIES.model),
+    ps(WINDOWS_HARDWARE_QUERIES.batteryJson),
+    ps(WINDOWS_HARDWARE_QUERIES.coreCount),
   ]);
 
   const cpuName = cpuRes.stdout.trim().split('\n')[0] || 'Unknown CPU';

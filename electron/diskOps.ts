@@ -123,6 +123,20 @@ export function buildLinuxFirstPartitionPath(device: string): string {
   return /(?:nvme\d+n\d+|mmcblk\d+|loop\d+)$/i.test(device) ? `${device}p1` : `${device}1`;
 }
 
+export function buildWindowsFlashDiskpartScript(diskNum: string): string {
+  return [
+    `select disk ${diskNum}`,
+    'attributes disk clear readonly',
+    'online disk noerr',
+    'clean',
+    'convert gpt',
+    'create partition primary',
+    'format fs=fat32 quick label=OPENCORE',
+    'assign',
+    '',
+  ].join('\n');
+}
+
 export function createDiskOps(log: LogFunction): DiskOps {
 
   /**
@@ -179,6 +193,16 @@ export function createDiskOps(log: LogFunction): DiskOps {
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
     return '';
+  }
+
+  async function detachWindowsDriveLetters(
+    diskNum: string,
+    register?: (child: any) => void,
+  ): Promise<void> {
+    await runCmd(
+      `powershell -NoProfile -Command "Get-Partition -DiskNumber ${diskNum} | Where-Object { $_.DriveLetter } | ForEach-Object { try { mountvol ($_.DriveLetter + ':') /D } catch {} }"`,
+      register,
+    );
   }
 
   async function getWindowsPrimaryPartitionNumber(diskNum: string): Promise<string> {
@@ -911,11 +935,18 @@ export function createDiskOps(log: LogFunction): DiskOps {
       } else if (process.platform === 'win32') {
         const diskNum = getWindowsDiskNumber(device);
         if (!diskNum) throw new Error(`Invalid device path: ${device}`);
-        const script = `select disk ${diskNum}\nclean\nconvert gpt\ncreate partition primary\nformat fs=fat32 quick label=OPENCORE\nassign\n`;
+        const script = buildWindowsFlashDiskpartScript(diskNum);
         const scriptPath = path.join(os.tmpdir(), `oc-diskpart-${crypto.randomUUID()}.txt`);
         fs.writeFileSync(scriptPath, script);
 
         try {
+          const mountedPartitions = await getMountedPartitions(device).catch(() => [] as string[]);
+          if (mountedPartitions.length > 0) {
+            onPhase('erase', `Detaching mounted volumes from disk ${diskNum}`);
+            log('WARN', 'usb-flash', 'Detaching mounted Windows volumes before flash', { diskNum, mountedPartitions });
+            await detachWindowsDriveLetters(diskNum, registerProcess);
+          }
+
           onPhase('format', `Running diskpart on disk ${diskNum}`);
           checkAborted();
           log('DEBUG', 'usb-flash', 'Running diskpart', { diskNum });

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'vitest';
-import { classifyDrive, type DriveInfo } from '../src/components/steps/UsbStep';
+import { classifyDrive, parseSizeGB, type DriveInfo } from '../src/components/steps/UsbStep';
 
 function makeDrive(overrides: Partial<DriveInfo> = {}): DriveInfo {
   return {
@@ -12,6 +12,12 @@ function makeDrive(overrides: Partial<DriveInfo> = {}): DriveInfo {
 }
 
 describe('UsbStep drive classification', () => {
+  test('parses localized and binary drive sizes correctly', () => {
+    assert.equal(parseSizeGB('31,9 GB') > 30, true);
+    assert.equal(parseSizeGB('28.8 GiB') > 29, true);
+    assert.equal(parseSizeGB('32000000000 B') > 31, true);
+  });
+
   test('keeps unverified USB drives selectable while details are still loading', () => {
     const result = classifyDrive(makeDrive(), true, { allowUnverifiedSelection: true });
 

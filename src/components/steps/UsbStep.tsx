@@ -152,16 +152,20 @@ function formatPartitionTable(pt: 'gpt' | 'mbr' | 'unknown' | undefined): string
   return '—';
 }
 
-function parseSizeGB(sizeStr: string): number {
-  const match = sizeStr.match(/([\d.]+)\s*([KMGT]i?B?|B)?/i);
+export function parseSizeGB(sizeStr: string): number {
+  const normalized = sizeStr
+    .trim()
+    .replace(/\u00a0/g, ' ')
+    .replace(/,/g, '.');
+  const match = normalized.match(/([\d.]+)\s*([KMGT]i?B?|B)?/i);
   if (!match) return Number.NaN;
   const val = parseFloat(match[1]);
   if (Number.isNaN(val)) return Number.NaN;
   const unit = (match[2] || '').toUpperCase();
-  if (unit.startsWith('T')) return val * 1000;
-  if (unit.startsWith('G')) return val;
-  if (unit.startsWith('M')) return val / 1000;
-  if (unit.startsWith('K')) return val / 1e6;
+  if (unit.startsWith('T')) return unit.includes('I') ? val * 1024 : val * 1000;
+  if (unit.startsWith('G')) return unit.includes('I') ? val * (1024 / 1000) : val;
+  if (unit.startsWith('M')) return unit.includes('I') ? val / 1024 * (1024 / 1000) : val / 1000;
+  if (unit.startsWith('K')) return unit.includes('I') ? val / (1024 * 1024) * (1024 / 1000) : val / 1e6;
   return val / 1e9;
 }
 

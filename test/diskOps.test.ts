@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { buildLinuxFirstPartitionPath, createDiskOps } from '../electron/diskOps.js';
+import { buildLinuxFirstPartitionPath, buildWindowsFlashDiskpartScript, createDiskOps } from '../electron/diskOps.js';
 
 // Null logger — we only care about violation output, not log calls
 const noop = () => {};
@@ -116,5 +116,15 @@ describe('diskOps platform helpers', () => {
     assert.equal(buildLinuxFirstPartitionPath('/dev/nvme0n1'), '/dev/nvme0n1p1');
     assert.equal(buildLinuxFirstPartitionPath('/dev/mmcblk0'), '/dev/mmcblk0p1');
     assert.equal(buildLinuxFirstPartitionPath('/dev/loop0'), '/dev/loop0p1');
+  });
+
+  test('buildWindowsFlashDiskpartScript clears readonly and brings the disk online before cleaning', () => {
+    const script = buildWindowsFlashDiskpartScript('2');
+
+    assert.match(script, /select disk 2/);
+    assert.match(script, /attributes disk clear readonly/);
+    assert.match(script, /online disk noerr/);
+    assert.match(script, /clean/);
+    assert.match(script, /convert gpt/);
   });
 });
