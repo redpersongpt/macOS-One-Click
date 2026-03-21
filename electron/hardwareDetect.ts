@@ -94,15 +94,15 @@ function resolveCpuVendor(vendorStr: string, rawName: string): { vendor: string;
 }
 
 export const WINDOWS_HARDWARE_QUERIES = {
-  cpuName: '(Get-CimInstance Win32_Processor).Name',
-  cpuVendor: '(Get-CimInstance Win32_Processor).Manufacturer',
+  cpuName: '(Get-CimInstance CIM_Processor).Name',
+  cpuVendor: '(Get-CimInstance CIM_Processor).Manufacturer',
   gpuJson: 'Get-CimInstance Win32_VideoController | Select-Object Name, PNPDeviceID | ConvertTo-Json -Compress',
   boardJson: 'Get-CimInstance Win32_BaseBoard | Select-Object Manufacturer, Product | ConvertTo-Json -Compress',
-  chassisTypes: '(Get-CimInstance Win32_SystemEnclosure).ChassisTypes',
-  manufacturer: '(Get-CimInstance Win32_ComputerSystem).Manufacturer',
-  model: '(Get-CimInstance Win32_ComputerSystem).Model',
+  chassisTypes: '(Get-CimInstance CIM_SystemEnclosure).ChassisTypes',
+  manufacturer: '(Get-CimInstance CIM_ComputerSystem).Manufacturer',
+  model: '(Get-CimInstance CIM_ComputerSystem).Model',
   batteryJson: 'Get-CimInstance Win32_Battery | Select-Object -First 1 | ConvertTo-Json -Compress',
-  coreCount: '(Get-CimInstance Win32_Processor).NumberOfCores',
+  coreCount: '(Get-CimInstance CIM_Processor).NumberOfCores',
 } as const;
 
 // ── Windows ───────────────────────────────────────────────────────────────────
@@ -110,7 +110,7 @@ export const WINDOWS_HARDWARE_QUERIES = {
 export async function detectWindowsHardware(): Promise<DetectedHardware> {
   const ps = (cmd: string, fallback = '') =>
     execPromise(`powershell -NoProfile -Command "${cmd}"`, {
-      timeout: 3_500,
+      timeout: 12_000,
       maxBuffer: 1024 * 1024,
     }).catch(() => ({ stdout: fallback }));
 

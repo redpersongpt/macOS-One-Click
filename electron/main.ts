@@ -1224,18 +1224,18 @@ async function getWindowsHardwareInfo(): Promise<HardwareProfile> {
   const psCommand = (cmd: string) => `powershell -NoProfile -Command "${cmd}"`;
   const runWindowsProbe = (cmd: string, fallback = '') =>
     execPromise(psCommand(cmd), {
-      timeout: 3_500,
+      timeout: 12_000,
       maxBuffer: 1024 * 1024,
     }).catch(() => ({ stdout: fallback }));
 
   const [cpuRaw, gpuRaw, baseboardRaw, coresRaw, chassisRaw, manufRaw, modelRaw, batteryRaw] = await Promise.all([
-    runWindowsProbe("Get-CimInstance Win32_Processor | Select-Object -ExpandProperty Name", 'Unknown CPU'),
-    runWindowsProbe("Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name", 'Unknown GPU'),
+    runWindowsProbe("Get-CimInstance CIM_Processor | Select-Object -ExpandProperty Name", 'Unknown CPU'),
+    runWindowsProbe("Get-CimInstance CIM_VideoController | Select-Object -ExpandProperty Name", 'Unknown GPU'),
     runWindowsProbe("Get-CimInstance Win32_BaseBoard | Select-Object -ExpandProperty Product", 'Unknown Board'),
-    runWindowsProbe("Get-CimInstance Win32_Processor | Select-Object -ExpandProperty NumberOfCores", '4'),
-    runWindowsProbe("Get-CimInstance Win32_SystemEnclosure | Select-Object -ExpandProperty ChassisTypes", '3'),
-    runWindowsProbe("Get-CimInstance Win32_ComputerSystem | Select-Object -ExpandProperty Manufacturer", 'Unknown'),
-    runWindowsProbe("Get-CimInstance Win32_ComputerSystem | Select-Object -ExpandProperty Model"),
+    runWindowsProbe("Get-CimInstance CIM_Processor | Select-Object -ExpandProperty NumberOfCores", '4'),
+    runWindowsProbe("Get-CimInstance CIM_SystemEnclosure | Select-Object -ExpandProperty ChassisTypes", '3'),
+    runWindowsProbe("Get-CimInstance CIM_ComputerSystem | Select-Object -ExpandProperty Manufacturer", 'Unknown'),
+    runWindowsProbe("Get-CimInstance CIM_ComputerSystem | Select-Object -ExpandProperty Model"),
     runWindowsProbe("Get-CimInstance Win32_Battery | Select-Object -First 1 | ConvertTo-Json -Compress"),
   ]);
 

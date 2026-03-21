@@ -127,6 +127,7 @@ export function buildWindowsFlashDiskpartScript(diskNum: string): string {
   return [
     `select disk ${diskNum}`,
     'attributes disk clear readonly noerr',
+    'offline disk noerr',
     'online disk noerr',
     'clean noerr',
     'convert gpt noerr',

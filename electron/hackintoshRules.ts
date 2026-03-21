@@ -138,6 +138,12 @@ export function classifyGpu(device: HardwareGpuDeviceSummary): GpuAssessment {
   const lower = name.toLowerCase();
   const vendor = resolveGpuVendor(name, device.vendorName);
 
+  if (lower.includes('microsoft remote display adapter') || lower.includes('microsoft basic display adapter') || lower.includes('remote display adapter') || lower.includes('basic display adapter') || lower.includes('render only') || lower.includes('indirect display')) {
+    return assessment(name, 'Unknown', 'unsupported', null, [
+      'This is a software or remote display adapter, not a physical GPU. It is safely ignored.',
+    ], { isLikelyDiscrete: false });
+  }
+
   if (vendor === 'NVIDIA') {
     if (
       lower.includes('rtx') ||

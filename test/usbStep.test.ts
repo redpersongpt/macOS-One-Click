@@ -16,6 +16,15 @@ describe('UsbStep drive classification', () => {
     assert.equal(parseSizeGB('31,9 GB') > 30, true);
     assert.equal(parseSizeGB('28.8 GiB') > 29, true);
     assert.equal(parseSizeGB('32000000000 B') > 31, true);
+    assert.equal(parseSizeGB(32000000000) > 31, true);
+  });
+
+  test('does not block standard 16 GB-class usb drives with real formatted capacity', () => {
+    const result = classifyDrive(makeDrive({ size: '14.4 GB', partitionTable: 'gpt', removable: true, isSystemDisk: false }), true, {
+      allowUnverifiedSelection: true,
+    });
+
+    assert.equal(result.tier, 'safe');
   });
 
   test('keeps unverified USB drives selectable while details are still loading', () => {

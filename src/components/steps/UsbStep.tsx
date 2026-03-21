@@ -60,7 +60,7 @@ export function classifyDrive(
     });
   }
 
-  if (requireFullSize && hasKnownSize && sizeGB < 14.5) {
+  if (requireFullSize && hasKnownSize && sizeGB < 14.0) {
     reasons.push({
       code: 'DEVICE_TOO_SMALL',
       label: 'Drive too small',
@@ -152,8 +152,9 @@ function formatPartitionTable(pt: 'gpt' | 'mbr' | 'unknown' | undefined): string
   return '—';
 }
 
-export function parseSizeGB(sizeStr: string): number {
-  const normalized = sizeStr
+export function parseSizeGB(sizeStr: string | number): number {
+  if (sizeStr === undefined || sizeStr === null) return Number.NaN;
+  const normalized = String(sizeStr)
     .trim()
     .replace(/\u00a0/g, ' ')
     .replace(/,/g, '.');

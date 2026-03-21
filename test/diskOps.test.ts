@@ -123,6 +123,7 @@ describe('diskOps platform helpers', () => {
 
     assert.match(script, /select disk 2/);
     assert.match(script, /attributes disk clear readonly noerr/);
+    assert.match(script, /offline disk noerr/);
     assert.match(script, /online disk noerr/);
     assert.match(script, /clean noerr/);
     assert.match(script, /convert gpt noerr/);

@@ -8,12 +8,12 @@ import {
 } from '../electron/hardwareDetect.js';
 
 describe('hardwareDetect Windows queries', () => {
-  test('uses Win32 classes for CPU and GPU detection', () => {
-    assert.match(WINDOWS_HARDWARE_QUERIES.cpuName, /Win32_Processor/);
-    assert.match(WINDOWS_HARDWARE_QUERIES.cpuVendor, /Win32_Processor/);
+  test('uses the stable cim queries from the known-good windows detector', () => {
+    assert.match(WINDOWS_HARDWARE_QUERIES.cpuName, /CIM_Processor/);
+    assert.match(WINDOWS_HARDWARE_QUERIES.cpuVendor, /CIM_Processor/);
     assert.match(WINDOWS_HARDWARE_QUERIES.gpuJson, /Win32_VideoController/);
-    assert.doesNotMatch(WINDOWS_HARDWARE_QUERIES.cpuName, /CIM_Processor/);
-    assert.doesNotMatch(WINDOWS_HARDWARE_QUERIES.gpuJson, /CIM_VideoController/);
+    assert.match(WINDOWS_HARDWARE_QUERIES.chassisTypes, /CIM_SystemEnclosure/);
+    assert.match(WINDOWS_HARDWARE_QUERIES.manufacturer, /CIM_ComputerSystem/);
   });
 
   test('classifies microsoft remote display adapters without poisoning gpu vendor detection', () => {
