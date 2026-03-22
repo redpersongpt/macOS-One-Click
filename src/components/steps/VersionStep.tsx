@@ -129,7 +129,11 @@ export default function VersionStep({
         <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/32">
           {recommendedRow ? 'Other Available Targets' : 'Available Targets'}
         </div>
-        {recommendedRow ? (
+        {matrix.rows.length === 0 ? (
+          <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4 text-sm text-white/50">
+            No compatible macOS versions found for this hardware.
+          </div>
+        ) : recommendedRow ? (
           alternativeRows.length > 0 && (
             <CompatibilityMatrixView
               rows={alternativeRows}

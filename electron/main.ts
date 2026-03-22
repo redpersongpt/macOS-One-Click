@@ -417,7 +417,12 @@ function validateInstalledKext(kextName: string, targetDir: string): boolean {
   // Codeless kexts (e.g. AppleMCEReporterDisabler) have Info.plist but no Contents/MacOS
   const infoPlist = path.join(kextPath, 'Contents', 'Info.plist');
   const macosDir = path.join(kextPath, 'Contents', 'MacOS');
-  if (!fs.existsSync(macosDir)) return fs.existsSync(infoPlist);
+  if (!fs.existsSync(macosDir)) {
+    try {
+      const content = fs.readFileSync(infoPlist, 'utf-8');
+      return content.includes('<plist') && content.includes('CFBundleIdentifier');
+    } catch { return false; }
+  }
   // Binary kexts: Contents/MacOS should have at least one file > 1KB
   try {
     const files = fs.readdirSync(macosDir);

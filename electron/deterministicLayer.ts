@@ -567,8 +567,13 @@ export function verifyEfiBuildSuccess(efiPath: string, requiredKexts: string[]):
     const macosDir = path.join(kextPath, 'Contents', 'MacOS');
     if (!fs.existsSync(macosDir)) {
       // Codeless kexts (e.g. AppleMCEReporterDisabler) have Info.plist but no binary
-      const hasInfoPlist = fs.existsSync(path.join(kextPath, 'Contents', 'Info.plist'));
-      if (!hasInfoPlist) stubKexts.push(k);
+      const plistFile = path.join(kextPath, 'Contents', 'Info.plist');
+      let validCodeless = false;
+      try {
+        const plistContent = fs.readFileSync(plistFile, 'utf-8');
+        validCodeless = plistContent.includes('<plist') && plistContent.includes('CFBundleIdentifier');
+      } catch { /* missing or unreadable */ }
+      if (!validCodeless) stubKexts.push(k);
       continue;
     }
     try {

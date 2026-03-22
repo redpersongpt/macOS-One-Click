@@ -3114,11 +3114,11 @@ export default function App() {
 
 
                 {/* VERSION SELECT */}
-                {step === 'version-select' && compat && (
+                {step === 'version-select' && compat && profile && (
                   <motion.div key="ver" initial={stepEnter} animate={stepActive} exit={stepExit} transition={STEP_TRANSITION}>
                     <VersionStep
                       report={compat}
-                      matrix={compatibilityMatrix ?? buildCompatibilityMatrix(profile!)}
+                      matrix={compatibilityMatrix ?? buildCompatibilityMatrix(profile)}
                       selectedVersion={profile?.targetOS ?? compat.recommendedVersion}
                       onUseRecommendedVersion={() => {
                         if (!profile || !compat.recommendedVersion) return;

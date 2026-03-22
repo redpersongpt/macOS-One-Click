@@ -570,7 +570,10 @@ export function generateConfigPlist(profile: HardwareProfile): string {
     // AMD Kernel Patches
     let kernelPatches: any[] = [];
     if (profile.architecture === 'AMD') {
-        kernelPatches = getAMDPatches(profile.coreCount || 6);
+        if (!profile.coreCount || profile.coreCount < 1) {
+            throw new Error(`AMD build requires a detected core count — got ${profile.coreCount ?? 'none'}. Re-run the hardware scan.`);
+        }
+        kernelPatches = getAMDPatches(profile.coreCount);
     }
 
     // Z390 NVRAM fix flags

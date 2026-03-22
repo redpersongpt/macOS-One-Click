@@ -58,10 +58,11 @@ function choosePlanningRecommendation(
   rows: CompatibilityMatrixRow[],
   baselineRecommendedVersion: string,
 ): string {
-  return baselineRecommendedVersion
-    || rows.find((row) => row.status === 'supported' || row.status === 'experimental')?.versionName
-    || rows.find((row) => row.status !== 'blocked')?.versionName
-    || baselineRecommendedVersion;
+  if (baselineRecommendedVersion) return baselineRecommendedVersion;
+  return rows.find((row) => row.status === 'supported' || row.status === 'experimental')?.versionName
+    ?? rows.find((row) => row.status !== 'blocked')?.versionName
+    ?? rows[0]?.versionName
+    ?? 'macOS Ventura';
 }
 
 export function buildCompatibilityMatrix(
