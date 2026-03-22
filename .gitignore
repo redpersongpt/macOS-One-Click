@@ -37,4 +37,10 @@ AGENTS.md
 CLAUDE_HANDOFF.md
 _local_recovered_internal/
 CLAUDEHANDOFF.md
+CODEX_HANDOFF.md
 codex-last-message.txt
+
+# Tests
+test/
+vitest.config.ts
+TESTING.md
