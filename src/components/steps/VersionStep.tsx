@@ -26,59 +26,56 @@ export default function VersionStep({
   const recommendedPalette = recommendedRow ? getMacOSPalette(recommendedRow.versionName) : null;
 
   return (
-    <div className="space-y-7 pb-8">
-      <div className="space-y-2">
-        <h2 className="text-4xl font-bold text-white">Choose macOS</h2>
+    <div className="space-y-5 pb-6">
+      <div className="space-y-1.5">
+        <h2 className="text-3xl font-bold text-white">Choose macOS</h2>
         <p className="max-w-2xl text-sm font-medium leading-relaxed text-white/55">
-          Start with the version most likely to boot cleanly on this hardware. Older and riskier targets stay visible below if you want to experiment later.
+          Pick the version most likely to boot cleanly. Riskier targets stay visible below.
         </p>
       </div>
 
       {recommendedRow && recommendedPalette && (
-        <div className={`relative overflow-hidden rounded-[28px] border p-6 shadow-[0_24px_80px_rgba(37,99,235,0.18)] ${recommendedPalette.heroClassName}`}>
-          <div className={`pointer-events-none absolute inset-x-0 top-0 h-36 bg-gradient-to-br ${recommendedPalette.fieldClassName}`} />
-          <div className={`pointer-events-none absolute right-[-56px] top-[-48px] h-44 w-44 rounded-full blur-3xl ${recommendedPalette.glowClassName}`} />
+        <div className={`relative overflow-hidden rounded-2xl border p-5 shadow-[0_18px_60px_rgba(37,99,235,0.14)] ${recommendedPalette.heroClassName}`}>
+          <div className={`pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-br ${recommendedPalette.fieldClassName}`} />
+          <div className={`pointer-events-none absolute right-[-48px] top-[-40px] h-36 w-36 rounded-full blur-3xl ${recommendedPalette.glowClassName}`} />
           <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-white/22" />
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-            <div className="space-y-4">
-              <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/18 px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-white/78">
-                <Sparkles className="h-3.5 w-3.5" />
-                Recommended Starting Point
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="space-y-3">
+              <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/18 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-white/78">
+                <Sparkles className="h-3 w-3" />
+                Recommended
               </div>
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/38">
                   {recommendedPalette.tone}
                 </div>
-                <div className="text-3xl font-black tracking-tight text-white">{recommendedRow.versionName}</div>
-                <div className="max-w-2xl text-sm leading-relaxed text-white/72">
+                <div className="text-2xl font-black tracking-tight text-white">{recommendedRow.versionName}</div>
+                <div className="max-w-xl text-xs leading-relaxed text-white/65">
                   {recommendedRow.reason}
                 </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                <span className="rounded-full border border-white/10 bg-white/7 px-2.5 py-1 font-bold uppercase tracking-[0.16em] text-white/65">
+              <div className="flex flex-wrap items-center gap-2 text-[10px]">
+                <span className="rounded-full border border-white/10 bg-white/7 px-2 py-0.5 font-bold uppercase tracking-[0.16em] text-white/65">
                   {recommendedRow.status}
-                </span>
-                <span className="rounded-full border border-white/10 bg-black/18 px-2.5 py-1 text-white/50">
-                  Recommended first build
                 </span>
               </div>
             </div>
 
-            <div className="flex flex-col gap-2.5 lg:min-w-[240px]">
+            <div className="flex flex-col gap-2 lg:min-w-[200px]">
               {onUseRecommendedVersion && selectedVersion !== recommendedRow.versionName && (
                 <button
                   onClick={onUseRecommendedVersion}
-                  className={`inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-bold text-slate-950 transition-all ${recommendedPalette.buttonHoverClassName}`}
+                  className={`inline-flex items-center justify-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-bold text-slate-950 transition-all ${recommendedPalette.buttonHoverClassName}`}
                 >
-                  Use Recommended Version
+                  Use {recommendedRow.versionName}
                   <ArrowRight className="h-4 w-4" />
                 </button>
               )}
-              <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-xs leading-relaxed text-white/58">
-                {selectedRow?.versionName === recommendedRow.versionName
-                  ? 'You are already on the recommended starting point.'
-                  : `Current selection: ${selectedVersion}. Switch to ${recommendedRow.versionName} for the cleanest first attempt.`}
-              </div>
+              {selectedRow?.versionName !== recommendedRow.versionName && (
+                <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-[11px] leading-relaxed text-white/50">
+                  Currently selected: {selectedVersion}
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -69,7 +69,7 @@ export default function ResourcePlanPanel({ plan }: ResourcePlanPanelProps) {
                   </div>
                   <div className="mt-1 break-all text-[11px] text-white/45">{resource.source}</div>
                   <div className="mt-1 break-words text-[11px] text-white/60">
-                    Expected identity/version: <span className="font-mono">{resource.expectedIdentityOrVersion}</span>
+                    Expected: <span className="font-mono">{resource.expectedIdentityOrVersion}</span>
                   </div>
                 </div>
                 <div className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full border text-[10px] font-bold uppercase tracking-widest ${outcome.className}`}>

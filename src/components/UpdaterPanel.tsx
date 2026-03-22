@@ -1,4 +1,4 @@
-import { ArrowUpRight, CheckCircle2, Download, Loader2, RefreshCcw } from 'lucide-react';
+import { ArrowUpRight, CheckCircle2, Download, Loader2, RefreshCcw, RotateCw } from 'lucide-react';
 import type { AppUpdateState } from '../../electron/appUpdater';
 
 interface UpdaterPanelProps {
@@ -11,28 +11,34 @@ interface UpdaterPanelProps {
 function formatRefreshTimestamp(timestamp: number | null | undefined): string | null {
   if (!timestamp) return null;
   const deltaMs = Date.now() - timestamp;
-  if (deltaMs < 15_000) return 'Checked just now';
-  if (deltaMs < 60_000) return 'Checked less than a minute ago';
-  return `Checked at ${new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  if (deltaMs < 15_000) return 'Just now';
+  if (deltaMs < 60_000) return 'Less than a minute ago';
+  return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function buildPrimaryAction(state: AppUpdateState | null): { label: string; disabled: boolean } {
+function buildPrimaryAction(state: AppUpdateState | null): {
+  label: string;
+  disabled: boolean;
+  icon: 'restart' | 'download' | 'none';
+} {
   if (state?.restartRequired) {
-    return { label: 'Restart app', disabled: false };
+    return { label: 'Restart to update', icon: 'restart', disabled: false };
   }
   if (state?.readyToInstall) {
-    return { label: state.installing ? 'Preparing…' : 'Install update', disabled: !!state.installing || !!state.checking };
+    return {
+      label: state.installing ? 'Installing…' : 'Install update',
+      icon: 'download',
+      disabled: !!state.installing || !!state.checking,
+    };
   }
   if (state?.available) {
     return {
       label: state.downloading ? 'Downloading…' : 'Download update',
+      icon: 'download',
       disabled: !!state.downloading || !!state.installing || !!state.checking || !state.supported,
     };
   }
-  return {
-    label: state?.checking ? 'Refreshing…' : 'No update available',
-    disabled: true,
-  };
+  return { label: 'Up to date', icon: 'none', disabled: true };
 }
 
 export default function UpdaterPanel({
@@ -43,117 +49,117 @@ export default function UpdaterPanel({
 }: UpdaterPanelProps) {
   const progressPercent = state?.totalBytes && state.totalBytes > 0
     ? Math.min(100, Math.round((state.downloadedBytes / state.totalBytes) * 100))
-    : state?.readyToInstall || state?.restartRequired
-    ? 100
-    : 0;
-  const refreshLabel = state?.checking
-    ? 'Refreshing now'
-    : formatRefreshTimestamp(state?.lastCheckedAt)
-      ?? 'Check for the latest release and installer.';
+    : state?.readyToInstall || state?.restartRequired ? 100 : 0;
+
+  const showProgress = !!(state?.downloading || state?.readyToInstall || state?.restartRequired);
+  const refreshBusy = !!(state?.checking || state?.downloading || state?.installing);
+
   const headline = state?.restartRequired
-    ? 'Set up complete - please restart the app'
+    ? 'Restart to finish updating'
     : state?.checking
-    ? 'Refreshing update status…'
+    ? 'Checking for updates…'
     : state?.downloading
-    ? 'Downloading update…'
+    ? 'Downloading…'
     : state?.readyToInstall
-    ? 'Update ready to finish'
+    ? 'Ready to install'
     : state?.available
-    ? `${state.latestVersion} is ready`
-    : "You're up to date";
+    ? `${state.latestVersion ?? 'Update'} available`
+    : 'Up to date';
+
   const detail = state?.restartRequired
-    ? `The updated files are staged. Restart the app to finish loading ${state.latestVersion ?? 'the latest version'}.`
-    : state?.checking
-    ? 'Checking the latest published release and installer availability for this platform.'
-    : state?.readyToInstall
-    ? 'Install the downloaded update, then restart the app once setup finishes.'
-    : state?.available
-    ? `Download ${state.assetName ?? 'the latest build'} directly in the app.`
+    ? `${state.latestVersion ?? 'Update'} is staged and ready.`
     : state?.error
     ? state.error
-    : `Current version: ${state?.currentVersion ?? 'unknown'}`;
+    : state?.available
+    ? state.assetName ?? 'New version available'
+    : `v${state?.currentVersion ?? '?'}`;
+
   const primaryAction = buildPrimaryAction(state);
+  const showPrimary = !!(state?.available || state?.readyToInstall || state?.restartRequired);
+  const checkedAt = formatRefreshTimestamp(state?.lastCheckedAt);
 
   return (
-    <div className="w-full min-w-0 rounded-[1.6rem] border border-white/10 bg-white/[0.04] p-5 text-left backdrop-blur-md">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0 flex-1 space-y-3">
-          <div className="text-[11px] font-bold uppercase tracking-[0.28em] text-white/35">Updater</div>
-          <div className="min-w-0 text-lg font-bold text-white break-words">
-            {headline}
+    <div className="w-full min-w-0 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3.5 text-left backdrop-blur-md">
+      {/* Header row: headline + refresh */}
+      <div className="flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            {state?.checking ? (
+              <Loader2 className="h-3.5 w-3.5 flex-shrink-0 animate-spin text-blue-300" />
+            ) : state?.restartRequired ? (
+              <RotateCw className="h-3.5 w-3.5 flex-shrink-0 text-emerald-400" />
+            ) : showProgress ? (
+              <Download className="h-3.5 w-3.5 flex-shrink-0 text-blue-300" />
+            ) : state?.available ? (
+              <Download className="h-3.5 w-3.5 flex-shrink-0 text-white/60" />
+            ) : (
+              <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0 text-white/30" />
+            )}
+            <span className="min-w-0 truncate text-sm font-semibold text-white">
+              {headline}
+            </span>
           </div>
-          <p className="min-w-0 text-sm leading-relaxed text-white/50 break-words">
+          <p className="mt-0.5 min-w-0 truncate text-xs text-white/40 pl-[22px]">
             {detail}
           </p>
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className={`inline-flex min-w-0 items-center gap-2 rounded-full border px-3 py-1 font-semibold ${
-              state?.checking
-                ? 'border-blue-400/20 bg-blue-500/10 text-blue-100'
-                : 'border-white/10 bg-white/5 text-white/55'
-            }`}>
-              {state?.checking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-              <span className="min-w-0 break-words">{refreshLabel}</span>
-            </span>
-            {state?.assetName && (
-              <span className="min-w-0 break-words rounded-full border border-white/10 bg-white/5 px-3 py-1 font-medium text-white/45">
-                Asset: {state.assetName}
-              </span>
-            )}
-          </div>
         </div>
-
         <button
           onClick={onRefresh}
-          disabled={state?.checking || state?.downloading || state?.installing}
-          className="inline-flex w-full min-w-0 items-center justify-center gap-2 rounded-2xl border border-blue-400/25 bg-blue-500/10 px-4 py-3 text-sm font-semibold text-blue-100 transition-all hover:bg-blue-500/16 hover:text-white disabled:cursor-not-allowed disabled:opacity-60 lg:w-auto"
+          disabled={refreshBusy}
+          title="Check for updates"
+          className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg border border-white/8 bg-white/[0.04] text-white/50 transition-colors hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
         >
-          <RefreshCcw className={`h-4 w-4 ${state?.checking ? 'animate-spin' : ''}`} />
-          <span className="min-w-0 break-words text-center">
-            {state?.checking ? 'Refreshing…' : 'Refresh'}
-          </span>
+          <RefreshCcw className={`h-3.5 w-3.5 ${state?.checking ? 'animate-spin' : ''}`} />
         </button>
       </div>
 
-      {(state?.downloading || state?.readyToInstall || state?.restartRequired) && (
-        <div className="mt-4">
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-white/45">
-            <span className="min-w-0 break-words">
-              {state.restartRequired
-                ? 'Set up complete'
-                : state.downloading
-                ? 'Downloading update…'
-                : 'Download complete'}
+      {/* Progress bar */}
+      {showProgress && (
+        <div className="mt-2.5 pl-[22px]">
+          <div className="flex items-center gap-3">
+            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/8">
+              <div
+                className="h-full rounded-full bg-white/80 transition-[width] duration-300"
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+            <span className="flex-shrink-0 text-[11px] tabular-nums text-white/35">
+              {progressPercent}%
             </span>
-            <span>{progressPercent > 0 ? `${progressPercent}%` : '—'}</span>
-          </div>
-          <div className="h-2 overflow-hidden rounded-full bg-white/8">
-            <div
-              className="h-full rounded-full bg-white transition-all"
-              style={{ width: `${progressPercent}%` }}
-            />
           </div>
         </div>
       )}
 
-      <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-        <button
-          onClick={onPrimaryAction}
-          disabled={primaryAction.disabled}
-          className="inline-flex w-full min-w-0 items-center justify-center gap-2 rounded-2xl bg-white px-5 py-3 text-sm font-bold text-black transition-transform hover:scale-[1.02] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60 sm:flex-1"
-        >
-          <Download className="h-4 w-4 flex-shrink-0" />
-          <span className="min-w-0 break-words text-center leading-tight">
-            {primaryAction.label}
-          </span>
-        </button>
-        <button
-          onClick={onOpenRelease}
-          className="inline-flex w-full min-w-0 items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-white/70 transition-colors hover:bg-white/10 hover:text-white sm:flex-1"
-        >
-          <span className="min-w-0 break-words text-center leading-tight">View release</span>
-          <ArrowUpRight className="h-4 w-4 flex-shrink-0 text-white/35" />
-        </button>
-      </div>
+      {/* Actions */}
+      {(showPrimary || state?.error) && (
+        <div className="mt-2.5 flex items-center gap-2 pl-[22px]">
+          {showPrimary && (
+            <button
+              onClick={onPrimaryAction}
+              disabled={primaryAction.disabled}
+              className="inline-flex min-w-0 items-center gap-1.5 rounded-lg bg-white px-3.5 py-1.5 text-xs font-bold text-black transition-transform hover:scale-[1.02] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {primaryAction.icon === 'restart' && <RotateCw className="h-3 w-3 flex-shrink-0" />}
+              {primaryAction.icon === 'download' && <Download className="h-3 w-3 flex-shrink-0" />}
+              {primaryAction.label}
+            </button>
+          )}
+          <button
+            onClick={onOpenRelease}
+            className="inline-flex min-w-0 items-center gap-1 rounded-lg border border-white/8 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-white/50 transition-colors hover:bg-white/[0.08] hover:text-white"
+          >
+            Release
+            <ArrowUpRight className="h-3 w-3 flex-shrink-0 text-white/30" />
+          </button>
+        </div>
+      )}
+
+      {/* Footer: last checked */}
+      {checkedAt && !state?.checking && (
+        <div className="mt-2 pl-[22px] text-[10px] text-white/25">
+          Checked {checkedAt}
+        </div>
+      )}
     </div>
   );
 }

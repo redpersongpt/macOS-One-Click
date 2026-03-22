@@ -154,10 +154,10 @@ export default function ReportStep({
   };
 
   return (
-    <div className="space-y-5 pb-8">
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+    <div className="space-y-4 pb-6">
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
         <div className="min-w-0">
-          <h2 className="text-4xl font-bold text-white mb-2">Your Hardware</h2>
+          <h2 className="text-3xl font-bold text-white mb-1.5">Your Hardware</h2>
           <motion.p
             initial={{ opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0 }}
@@ -209,43 +209,40 @@ export default function ReportStep({
         </div>
       )}
 
-      <div className={`rounded-2xl border p-4 ${planningOnly ? 'border-amber-500/20 bg-amber-500/6' : 'border-blue-500/12 bg-blue-500/5'} space-y-3`}>
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0">
+      <div className={`rounded-2xl border p-3.5 ${planningOnly ? 'border-amber-500/20 bg-amber-500/6' : 'border-blue-500/12 bg-blue-500/5'}`}>
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 items-center gap-2">
             <div className={`text-[10px] font-bold uppercase tracking-widest ${planningOnly ? 'text-amber-300/80' : 'text-blue-300/75'}`}>
               {planningStatusCopy}
             </div>
-            <div className="text-xs text-white/65 leading-relaxed mt-1">
-              {planningOnly
-                ? 'Imported and restored profiles are for planning only. Run a live scan before BIOS, build, or flash.'
-                : 'This profile came from a live scan in this session and can be used for BIOS, build, and flash checks.'}
-            </div>
+            {!planningOnly && (
+              <span className="text-[10px] text-white/35">Ready for BIOS, build, and flash</span>
+            )}
           </div>
-          {profileArtifact && (
-            <div className="text-[10px] text-white/40 font-mono lg:text-right">
-              <div>{profileArtifact.digest.slice(0, 12)}</div>
-              <div>{new Date(profileArtifact.capturedAt).toLocaleString()}</div>
-            </div>
-          )}
+          <div className="flex items-center gap-3">
+            {profileArtifact && (
+              <span className="text-[10px] text-white/30 font-mono">{profileArtifact.digest.slice(0, 12)}</span>
+            )}
+            {planningOnly && (
+              <button
+                onClick={() => void runAction('scan', onRunLiveScan)}
+                disabled={busyAction !== null}
+                className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-[11px] font-bold hover:bg-blue-500 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {busyAction === 'scan' ? 'Scanning…' : 'Run Live Scan'}
+              </button>
+            )}
+          </div>
         </div>
         {planningOnly && (
-          <div className="flex flex-col gap-3 pt-1 sm:flex-row sm:items-center">
-            <button
-              onClick={() => void runAction('scan', onRunLiveScan)}
-              disabled={busyAction !== null}
-              className="px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-500 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {busyAction === 'scan' ? 'Scanning…' : 'Run Live Scan'}
-            </button>
-            <span className="text-[11px] text-amber-200/55">
-              You can keep planning now. BIOS, build, and flash stay locked until a live scan is available.
-            </span>
+          <div className="mt-2 text-[11px] text-amber-200/50">
+            Planning only — BIOS, build, and flash require a live scan.
           </div>
         )}
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.3fr)_minmax(360px,0.9fr)]">
-        <div className="space-y-5">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(360px,0.9fr)]">
+        <div className="space-y-4">
           <CompatibilitySummary report={report} />
 
           <div>
@@ -264,7 +261,7 @@ export default function ReportStep({
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.05 }}
-            className="p-5 rounded-2xl bg-white/4 border border-white/6 space-y-1.5 relative">
+            className="p-4 rounded-2xl bg-white/4 border border-white/6 space-y-1.5 relative">
             <div className="text-[10px] text-[#555] font-bold uppercase tracking-widest flex justify-between">
               <span>Processor</span>
               {profile.architecture === 'AMD' && profile.isLaptop ? (
@@ -287,7 +284,7 @@ export default function ReportStep({
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 }}
-            className="p-5 rounded-2xl bg-white/4 border border-white/6 space-y-1.5 relative">
+            className="p-4 rounded-2xl bg-white/4 border border-white/6 space-y-1.5 relative">
             <div className="text-[10px] text-[#555] font-bold uppercase tracking-widest flex justify-between">
               <span>Graphics</span>
               {gpuBlocked || !bestDisplayPath ? (
@@ -316,7 +313,7 @@ export default function ReportStep({
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.15 }}
-            className="p-5 rounded-2xl bg-white/4 border border-white/6 space-y-1.5 relative">
+            className="p-4 rounded-2xl bg-white/4 border border-white/6 space-y-1.5 relative">
             <div className="text-[10px] text-[#555] font-bold uppercase tracking-widest flex justify-between">
               <span>Board & SMBIOS</span>
               {report.manualVerificationRequired ? (
@@ -336,7 +333,7 @@ export default function ReportStep({
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 }}
-            className="p-5 rounded-2xl bg-white/4 border border-white/6 space-y-1.5 relative">
+            className="p-4 rounded-2xl bg-white/4 border border-white/6 space-y-1.5 relative">
             <div className="text-[10px] text-[#555] font-bold uppercase tracking-widest flex justify-between">
               <span>Memory & Storage</span>
               {isBadNVMe ? (
@@ -409,7 +406,7 @@ export default function ReportStep({
           )}
         </div>
 
-        <div className="space-y-5">
+        <div className="space-y-4">
           <ResourcePlanPanel plan={resourcePlan} />
           {simulationResult && (
             <SimulationPreview result={simulationResult} report={report} />

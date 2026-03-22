@@ -2832,7 +2832,7 @@ export default function App() {
             animate={{ opacity: 1, scale: 1, y: 0 }} 
             exit={{ opacity: 0, scale: 1.02, y: -10 }}
             transition={{ type: "spring", stiffness: 100, damping: 20 }}
-            className="z-10 flex flex-col items-center text-center max-w-2xl px-6"
+            className="z-10 flex max-h-[calc(100vh-2rem)] w-full max-w-2xl flex-col items-center overflow-y-auto px-6 py-4 text-center custom-scrollbar"
           >
             <motion.div 
               initial={{ opacity: 0, y: 20 }}
@@ -2844,10 +2844,10 @@ export default function App() {
                   y: { duration: 6, repeat: Infinity, ease: "easeInOut" }
                 }
               }}
-              className="w-40 h-40 mb-10 flex items-center justify-center rounded-[2.5rem] bg-white/5 border border-white/10 backdrop-blur-xl shadow-2xl relative"
+              className="w-32 h-32 mb-8 flex items-center justify-center rounded-[2rem] bg-white/5 border border-white/10 backdrop-blur-xl shadow-2xl relative"
             >
               <div className="absolute inset-0 rounded-[2.5rem] bg-blue-500 blur-3xl opacity-20 pointer-events-none" />
-              <BrandIcon className="w-24 h-24 text-white relative z-10" />
+              <BrandIcon className="w-20 h-20 text-white relative z-10" />
             </motion.div>
             
             <motion.div
@@ -2855,7 +2855,7 @@ export default function App() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
             >
-              <h1 className="text-8xl font-black tracking-tighter mb-6 bg-clip-text text-transparent bg-gradient-to-b from-white to-white/40 leading-[0.9]">
+              <h1 className="text-7xl font-black tracking-tighter mb-4 bg-clip-text text-transparent bg-gradient-to-b from-white to-white/40 leading-[0.9]">
                 Install <br/> macOS
               </h1>
             </motion.div>
@@ -2864,7 +2864,7 @@ export default function App() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.3 }}
-              className="text-xl text-white/50 mb-12 leading-relaxed font-medium max-w-lg"
+              className="text-lg text-white/50 mb-8 leading-relaxed font-medium max-w-lg"
             >
               Scan your hardware. Build an OpenCore EFI. Write a bootable installer. Done.
             </motion.p>
@@ -2910,7 +2910,7 @@ export default function App() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 1 }}
-              className="mt-12 text-[10px] text-white/20 font-mono uppercase tracking-[0.4em]"
+              className="mt-8 text-[10px] text-white/20 font-mono uppercase tracking-[0.4em]"
             >
               macOS OneClick
             </motion.p>

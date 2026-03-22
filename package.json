@@ -84,17 +84,20 @@
     "vite": "^6.2.0"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
     "electron": "^41.0.2",
     "electron-builder": "^26.8.1",
+    "jsdom": "^29.0.1",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
-    "wait-on": "^9.0.4",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.0",
+    "wait-on": "^9.0.4"
   },
   "repository": {
     "type": "git",

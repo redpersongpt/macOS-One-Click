@@ -59,18 +59,18 @@ export default function CompatibilityMatrix({
         const selected = selectedVersion === row.versionName;
         const interactive = !!onSelect && !style.disabled;
         const content = (
-          <div className={`group relative min-h-[212px] overflow-hidden rounded-[26px] border p-5 text-left transition-all ${row.recommended ? `${palette.heroClassName} shadow-[0_18px_60px_rgba(37,99,235,0.14)]` : 'bg-white/[0.045]'} ${style.cardClassName} ${selected ? 'ring-1 ring-blue-400/40 border-blue-400/35 shadow-[0_0_0_1px_rgba(96,165,250,0.12)]' : 'border-white/8'} ${interactive ? 'hover:border-white/18 hover:bg-white/[0.065]' : ''} ${row.status === 'blocked' ? 'opacity-80' : ''}`}>
-            <div className={`pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-br ${palette.fieldClassName}`} />
-            <div className={`pointer-events-none absolute -right-12 top-[-42px] h-36 w-36 rounded-full blur-3xl ${palette.glowClassName}`} />
+          <div className={`group relative overflow-hidden rounded-2xl border p-4 text-left transition-all ${row.recommended ? `${palette.heroClassName} shadow-[0_18px_60px_rgba(37,99,235,0.14)]` : 'bg-white/[0.045]'} ${style.cardClassName} ${selected ? 'ring-1 ring-blue-400/40 border-blue-400/35 shadow-[0_0_0_1px_rgba(96,165,250,0.12)]' : 'border-white/8'} ${interactive ? 'hover:border-white/18 hover:bg-white/[0.065]' : ''} ${row.status === 'blocked' ? 'opacity-80' : ''}`}>
+            <div className={`pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-br ${palette.fieldClassName}`} />
+            <div className={`pointer-events-none absolute -right-12 top-[-42px] h-32 w-32 rounded-full blur-3xl ${palette.glowClassName}`} />
             <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-white/20" />
-            <div className="flex h-full flex-col gap-4">
+            <div className="flex h-full flex-col gap-3">
               <div className="flex items-start justify-between gap-3">
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/38">
                     {palette.tone}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <div className="text-xl font-black tracking-tight text-white">{row.versionName}</div>
+                    <div className="text-lg font-black tracking-tight text-white">{row.versionName}</div>
                     {row.recommended && (
                       <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${palette.badgeClassName}`}>
                         <Sparkles className="h-3.5 w-3.5" />
@@ -101,11 +101,11 @@ export default function CompatibilityMatrix({
                 </div>
               </div>
 
-              <div className="text-sm leading-relaxed text-white/72">
+              <div className="text-xs leading-relaxed text-white/65">
                 {row.reason}
               </div>
 
-              <div className="mt-auto border-t border-white/8 pt-3 text-[11px] leading-relaxed text-white/46">
+              <div className="mt-auto border-t border-white/8 pt-2.5 text-[11px] leading-relaxed text-white/40">
                 {row.status === 'blocked'
                   ? 'Do not build this target. Use the recommended version instead.'
                   : row.status === 'supported'

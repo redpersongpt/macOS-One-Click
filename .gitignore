@@ -40,7 +40,5 @@ CLAUDEHANDOFF.md
 CODEX_HANDOFF.md
 codex-last-message.txt
 
-# Tests
-test/
-vitest.config.ts
+# Internal QA docs
 TESTING.md
