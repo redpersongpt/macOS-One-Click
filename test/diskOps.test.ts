@@ -12,6 +12,7 @@ import {
   windowsWmiDiskStyleOutput,
   selectWindowsPrimaryDataPartition,
   buildWindowsAssignLetterDiskpartScript,
+  selectWindowsOpencoreReuseCandidate,
 } from '../electron/diskOps.js';
 
 // ─── Windows disk path normalization ─────────────────────────────────────────
@@ -602,5 +603,86 @@ describe('selectWindowsPrimaryDataPartition', () => {
       { partitionNumber: 1, sizeBytes: 200 * GB },
     ]);
     expect(result).toBe(1);
+  });
+});
+
+// ─── selectWindowsOpencoreReuseCandidate ─────────────────────────────────────
+// Regression for issue #26: large USB drives arrive pre-formatted as OPENCORE
+// FAT32 with no drive letter; the app should reuse them instead of running diskpart.
+
+const MB = 1024 * 1024;
+
+describe('selectWindowsOpencoreReuseCandidate', () => {
+  it('returns the single qualifying partition', () => {
+    const result = selectWindowsOpencoreReuseCandidate([
+      { partitionNumber: 1, driveLetter: '', fileSystem: 'FAT32', fileSystemLabel: 'OPENCORE', sizeBytes: 30_000 * MB },
+    ]);
+    expect(result).not.toBeNull();
+    expect(result!.partitionNumber).toBe(1);
+  });
+
+  it('returns null when driveLetter is already assigned (do not double-assign)', () => {
+    const result = selectWindowsOpencoreReuseCandidate([
+      { partitionNumber: 1, driveLetter: 'E', fileSystem: 'FAT32', fileSystemLabel: 'OPENCORE', sizeBytes: 30_000 * MB },
+    ]);
+    expect(result).toBeNull();
+  });
+
+  it('returns null when fileSystem is not FAT32 (NTFS, RAW, etc.)', () => {
+    const result = selectWindowsOpencoreReuseCandidate([
+      { partitionNumber: 1, driveLetter: '', fileSystem: 'NTFS', fileSystemLabel: 'OPENCORE', sizeBytes: 30_000 * MB },
+    ]);
+    expect(result).toBeNull();
+  });
+
+  it('returns null when label is not OPENCORE', () => {
+    const result = selectWindowsOpencoreReuseCandidate([
+      { partitionNumber: 1, driveLetter: '', fileSystem: 'FAT32', fileSystemLabel: 'USB_DRIVE', sizeBytes: 30_000 * MB },
+    ]);
+    expect(result).toBeNull();
+  });
+
+  it('returns null when partition is smaller than 200 MB', () => {
+    const result = selectWindowsOpencoreReuseCandidate([
+      { partitionNumber: 1, driveLetter: '', fileSystem: 'FAT32', fileSystemLabel: 'OPENCORE', sizeBytes: 100 * MB },
+    ]);
+    expect(result).toBeNull();
+  });
+
+  it('returns null when there are two OPENCORE FAT32 partitions (ambiguous)', () => {
+    const result = selectWindowsOpencoreReuseCandidate([
+      { partitionNumber: 1, driveLetter: '', fileSystem: 'FAT32', fileSystemLabel: 'OPENCORE', sizeBytes: 30_000 * MB },
+      { partitionNumber: 2, driveLetter: '', fileSystem: 'FAT32', fileSystemLabel: 'OPENCORE', sizeBytes: 30_000 * MB },
+    ]);
+    expect(result).toBeNull();
+  });
+
+  it('returns null for an empty partition list', () => {
+    expect(selectWindowsOpencoreReuseCandidate([])).toBeNull();
+  });
+
+  it('is case-insensitive for fileSystem and label', () => {
+    const result = selectWindowsOpencoreReuseCandidate([
+      { partitionNumber: 1, driveLetter: '', fileSystem: 'fat32', fileSystemLabel: 'opencore', sizeBytes: 30_000 * MB },
+    ]);
+    expect(result).not.toBeNull();
+  });
+
+  it('accepts exactly 200 MB (boundary — minimum valid size)', () => {
+    const result = selectWindowsOpencoreReuseCandidate([
+      { partitionNumber: 1, driveLetter: '', fileSystem: 'FAT32', fileSystemLabel: 'OPENCORE', sizeBytes: 200 * MB },
+    ]);
+    expect(result).not.toBeNull();
+  });
+
+  it('returns the unletttered partition when another OPENCORE FAT32 partition already has a letter', () => {
+    // Partition 1 already has a drive letter (already reachable), partition 2 does not.
+    // Only partition 2 passes the no-letter filter → exactly one candidate → return it.
+    const result = selectWindowsOpencoreReuseCandidate([
+      { partitionNumber: 1, driveLetter: 'D', fileSystem: 'FAT32', fileSystemLabel: 'OPENCORE', sizeBytes: 30_000 * MB },
+      { partitionNumber: 2, driveLetter: '', fileSystem: 'FAT32', fileSystemLabel: 'OPENCORE', sizeBytes: 30_000 * MB },
+    ]);
+    expect(result).not.toBeNull();
+    expect(result!.partitionNumber).toBe(2);
   });
 });

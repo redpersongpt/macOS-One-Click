@@ -255,6 +255,27 @@ export function getWindowsFat32PartitionSizeMB(deviceSizeBytes: number): number 
   return deviceSizeBytes > 32_000_000_000 ? 30_000 : undefined;
 }
 
+/**
+ * Find an existing unletttered OPENCORE FAT32 partition that is safe to reuse.
+ * Returns the single candidate partition if exactly one qualifies, or null.
+ * Safety conditions: FAT32 filesystem, OPENCORE label, no drive letter currently
+ * assigned, and at least 200 MB in size.  Requiring exactly one candidate avoids
+ * ambiguity on disks that happen to have two similarly-labelled partitions.
+ */
+export function selectWindowsOpencoreReuseCandidate(
+  partitions: WindowsFlashPreparedPartition[],
+): WindowsFlashPreparedPartition | null {
+  const MIN_SIZE_BYTES = 200 * 1024 * 1024; // 200 MB
+  const candidates = partitions.filter(
+    (p) =>
+      p.fileSystem.trim().toUpperCase() === 'FAT32' &&
+      p.fileSystemLabel.trim().toUpperCase() === 'OPENCORE' &&
+      !p.driveLetter.trim() &&
+      p.sizeBytes >= MIN_SIZE_BYTES,
+  );
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
 export type WindowsFlashPreparationStage =
   | 'create-partition'
   | 'format'
@@ -1317,6 +1338,28 @@ export function createDiskOps(log: LogFunction): DiskOps {
             onPhase('format', `Using existing OPENCORE partition on disk ${diskNum}`);
           }
 
+          // Issue #26: large drives often arrive pre-formatted (OPENCORE FAT32, no letter).
+          // Assign a drive letter and reuse the partition instead of running diskpart.
+          if (!driveLetter) {
+            const preCheckPartitions = await getWindowsPreparedPartitions(diskNum, registerProcess);
+            const reuseCandidate = selectWindowsOpencoreReuseCandidate(preCheckPartitions);
+            if (reuseCandidate) {
+              log('INFO', 'usb-flash', 'Found OPENCORE FAT32 partition with no drive letter — assigning', {
+                diskNum,
+                partitionNumber: reuseCandidate.partitionNumber,
+                sizeBytes: reuseCandidate.sizeBytes,
+              });
+              onPhase('format', `Assigning drive letter to existing OPENCORE partition on disk ${diskNum}`);
+              const assigned = await assignWindowsDriveLetter(
+                diskNum, reuseCandidate.partitionNumber, 'OPENCORE', registerProcess,
+              );
+              if (assigned) {
+                driveLetter = assigned;
+                log('INFO', 'usb-flash', 'Reused existing OPENCORE partition', { diskNum, driveLetter });
+              }
+            }
+          }
+
           if (!driveLetter) {
             // Need to prepare the drive with diskpart
             const mountedPartitions = await getMountedPartitions(device).catch(() => [] as string[]);
@@ -1425,35 +1468,66 @@ export function createDiskOps(log: LogFunction): DiskOps {
                   'Close all programs using this drive, unplug and reconnect it, then try again. ' +
                   'If it keeps failing, open an elevated Command Prompt and run: diskpart → select disk ' + diskNum + ' → clean → convert gpt → create partition primary → select partition 1 → format fs=fat32 quick label=OPENCORE → assign'
                 );
-              }
-              if (lastAssessment.stage === 'format') {
-                throw new Error(
-                  `diskpart created a partition on disk ${diskNum}, but failed to format it as FAT32 OPENCORE. ` +
-                  'The partition exists, but Windows did not report a FAT32 volume on it after diskpart finished. ' +
-                  'Close Explorer windows, antivirus scans, or backup tools touching this drive, then retry. ' +
-                  'If it keeps failing, format partition 1 manually as FAT32 and label it OPENCORE before retrying.'
-                );
-              }
-              if (lastAssessment.stage === 'assign') {
+              } else if (lastAssessment.stage === 'format') {
+                // Issue #25: diskpart format silently fails (noerr hides the exit code).
+                // Try PowerShell Format-Volume as a recovery path before giving up.
+                const partNum = lastAssessment.targetPartitionNumber ?? 1;
+                log('WARN', 'usb-flash', 'diskpart format failed — attempting Format-Volume recovery', { diskNum, partNum });
+                onPhase('format', `Recovering: formatting partition ${partNum} on disk ${diskNum}`);
+                let formatRecovered = false;
+                try {
+                  await runCmd(
+                    `powershell -NoProfile -Command "try { Format-Volume -DiskNumber ${diskNum} -PartitionNumber ${partNum} -FileSystem FAT32 -NewFileSystemLabel 'OPENCORE' -Confirm:$false -Force -ErrorAction Stop } catch { throw }"`,
+                    registerProcess,
+                  );
+                  const recoveredPartitions = await waitForWindowsPreparedPartitions(diskNum, registerProcess, 10, 500);
+                  const recoveredAssessment = assessWindowsFlashPreparationState({
+                    partitions: recoveredPartitions,
+                    expectedLabel: 'OPENCORE',
+                  });
+                  if (recoveredAssessment.status === 'ready') {
+                    driveLetter = recoveredAssessment.driveLetter;
+                    formatRecovered = true;
+                  } else if (recoveredAssessment.stage === 'assign') {
+                    const assignedLetter = await assignWindowsDriveLetter(
+                      diskNum, recoveredAssessment.targetPartitionNumber, 'OPENCORE', registerProcess,
+                    );
+                    if (assignedLetter) {
+                      driveLetter = assignedLetter;
+                      formatRecovered = true;
+                    }
+                  }
+                } catch (e) {
+                  log('WARN', 'usb-flash', 'Format-Volume recovery also failed', { diskNum, partNum, error: (e as Error).message });
+                }
+                if (!formatRecovered) {
+                  throw new Error(
+                    `diskpart created a partition on disk ${diskNum}, but failed to format it as FAT32 OPENCORE. ` +
+                    'The partition exists, but Windows did not report a FAT32 volume on it after diskpart finished. ' +
+                    'Close Explorer windows, antivirus scans, or backup tools touching this drive, then retry. ' +
+                    'If it keeps failing, format partition 1 manually as FAT32 and label it OPENCORE before retrying.'
+                  );
+                }
+              } else if (lastAssessment.stage === 'assign') {
                 throw new Error(
                   `Disk ${diskNum} has a FAT32 OPENCORE partition, but Windows did not assign a drive letter to it. ` +
                   'This usually means another process is holding a lock on the new volume. ' +
                   'Unplug the drive, wait 5 seconds, reconnect it, and try again. ' +
                   'If it keeps failing, open Disk Management (diskmgmt.msc) and manually assign a drive letter to partition 1.'
                 );
-              }
-              if (lastAssessment.stage === 'label-lookup') {
+              } else if (lastAssessment.stage === 'label-lookup') {
                 throw new Error(
                   `Disk ${diskNum} has a FAT32 partition with a drive letter, but the OPENCORE label could not be confirmed. ` +
                   'The app will not guess at an unlabeled volume on a destructive path. ' +
                   'Rename the new volume to OPENCORE in Disk Management, then retry.'
                 );
+              } else {
+                throw new Error(
+                  lastDiskpartError
+                    ? `diskpart could not prepare disk ${diskNum}. ${lastDiskpartError.message}`
+                    : `diskpart could not prepare disk ${diskNum}. Close all programs using this drive, unplug and reconnect it, then try again.`
+                );
               }
-              throw new Error(
-                lastDiskpartError
-                  ? `diskpart could not prepare disk ${diskNum}. ${lastDiskpartError.message}`
-                  : `diskpart could not prepare disk ${diskNum}. Close all programs using this drive, unplug and reconnect it, then try again.`
-              );
             }
           }
 
