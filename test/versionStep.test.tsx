@@ -88,6 +88,36 @@ describe('VersionStep – layout and copy', () => {
     expect(screen.queryByText('Use Recommended Version')).toBeNull();
   });
 
+  it('shows "Continue with" button when recommended version is already selected', () => {
+    render(
+      <VersionStep
+        report={fakeReport()}
+        matrix={fakeMatrix()}
+        selectedVersion="macOS Ventura"
+        onSelect={vi.fn()}
+        onUseRecommendedVersion={vi.fn()}
+      />,
+    );
+    // Should show "Continue with" since selected === recommended
+    expect(screen.getByText(/Continue with macOS Ventura/)).toBeInTheDocument();
+    // Should NOT show "Use" since we're already on it
+    expect(screen.queryByText(/Use macOS Ventura/)).toBeNull();
+  });
+
+  it('shows "Use" button when a non-recommended version is selected', () => {
+    render(
+      <VersionStep
+        report={fakeReport()}
+        matrix={fakeMatrix()}
+        selectedVersion="macOS Sonoma"
+        onSelect={vi.fn()}
+        onUseRecommendedVersion={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/Use macOS Ventura/)).toBeInTheDocument();
+    expect(screen.queryByText(/Continue with/)).toBeNull();
+  });
+
   it('root container uses space-y-5 (not excessive space-y-7)', () => {
     const { container } = render(
       <VersionStep

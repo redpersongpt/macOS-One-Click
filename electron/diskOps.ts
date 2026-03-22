@@ -246,19 +246,35 @@ export function createDiskOps(log: LogFunction): DiskOps {
   }
 
   async function getWindowsDriveLetterForLabel(diskNum: string, label: string, register?: (child: any) => void): Promise<string> {
-    const { stdout } = await runCmd(
-      `powershell -NoProfile -Command "(Get-Partition -DiskNumber ${diskNum} | Get-Volume | Where-Object { $_.FileSystemLabel -eq '${label}' }).DriveLetter"`,
-      register
-    );
-    return stdout.trim();
+    try {
+      const { stdout } = await runCmd(
+        `powershell -NoProfile -Command "try { (Get-Partition -DiskNumber ${diskNum} -ErrorAction Stop | Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.FileSystemLabel -eq '${label}' }).DriveLetter } catch { '' }"`,
+        register
+      );
+      return stdout.trim();
+    } catch {
+      return '';
+    }
+  }
+
+  async function windowsDiskHasPartitions(diskNum: string, register?: (child: any) => void): Promise<boolean> {
+    try {
+      const { stdout } = await runCmd(
+        `powershell -NoProfile -Command "try { (Get-Partition -DiskNumber ${diskNum} -ErrorAction Stop | Measure-Object).Count } catch { 0 }"`,
+        register,
+      );
+      return parseInt(stdout.trim(), 10) > 0;
+    } catch {
+      return false;
+    }
   }
 
   async function waitForWindowsDriveLetterForLabel(
     diskNum: string,
     label: string,
     register?: (child: any) => void,
-    attempts = 12,
-    delayMs = 500,
+    attempts = 20,
+    delayMs = 400,
   ): Promise<string> {
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       const driveLetter = await getWindowsDriveLetterForLabel(diskNum, label, register);
@@ -294,11 +310,13 @@ export function createDiskOps(log: LogFunction): DiskOps {
     const scriptPath = path.join(os.tmpdir(), `assign-letter-${crypto.randomUUID()}.txt`);
     fs.writeFileSync(scriptPath, script);
     try {
-      await runCmd(`diskpart /s "${scriptPath}"`, register).catch(() => ({ stdout: '', stderr: '' }));
+      await runCmd(`diskpart /s "${scriptPath}"`, register);
+    } catch (e) {
+      log('WARN', 'diskOps', 'diskpart assign-letter failed (non-fatal)', { diskNum, error: (e as Error).message });
     } finally {
       try { fs.unlinkSync(scriptPath); } catch {}
     }
-    return await waitForWindowsDriveLetterForLabel(diskNum, label, register, 8, 500);
+    return await waitForWindowsDriveLetterForLabel(diskNum, label, register, 10, 500);
   }
 
   async function getWindowsPrimaryPartitionNumber(diskNum: string): Promise<string> {
@@ -637,12 +655,20 @@ export function createDiskOps(log: LogFunction): DiskOps {
       } else if (process.platform === 'win32') {
         const diskNum = getWindowsDiskNumber(device);
         if (diskNum) {
-          const { stdout } = await runCmd(`powershell -NoProfile -Command "Get-Disk -Number ${diskNum} | Select-Object -ExpandProperty PartitionStyle"`);
-          if (stdout.trim().toUpperCase() === 'GPT') return 'gpt';
-          if (stdout.trim().toUpperCase() === 'MBR') return 'mbr';
+          const { stdout } = await runCmd(`powershell -NoProfile -Command "try { (Get-Disk -Number ${diskNum} -ErrorAction Stop).PartitionStyle.ToString().ToUpper() } catch { 'ERROR' }"`);
+          const style = stdout.trim().toUpperCase();
+          if (style === 'GPT') return 'gpt';
+          if (style === 'MBR') return 'mbr';
+          // RAW means the disk has no partition table yet — treat as 'unknown' (correct)
+          // ERROR means the disk is not accessible — also 'unknown' (correct)
+          log('WARN', 'diskOps', `Partition style for disk ${diskNum}: "${style}"`, { device });
+        } else {
+          log('WARN', 'diskOps', 'Could not extract disk number from device path', { device });
         }
       }
-    } catch {}
+    } catch (e) {
+      log('WARN', 'diskOps', 'Partition table detection failed', { device, error: (e as Error).message });
+    }
     return 'unknown';
   }
 
@@ -1039,64 +1065,117 @@ export function createDiskOps(log: LogFunction): DiskOps {
         if (!diskNum) throw new Error(`Invalid device path: ${device}`);
         const deviceSizeBytes = await getDeviceSize(device).catch(() => 0);
         const partitionSizeMB = getWindowsFat32PartitionSizeMB(deviceSizeBytes);
-        const script = buildWindowsFlashDiskpartScript(diskNum, partitionSizeMB);
-        const scriptPath = path.join(os.tmpdir(), `oc-diskpart-${crypto.randomUUID()}.txt`);
-        fs.writeFileSync(scriptPath, script);
 
         try {
-          const mountedPartitions = await getMountedPartitions(device).catch(() => [] as string[]);
-          if (mountedPartitions.length > 0) {
-            onPhase('erase', `Detaching mounted volumes from disk ${diskNum}`);
-            log('WARN', 'usb-flash', 'Detaching mounted Windows volumes before flash', { diskNum, mountedPartitions });
-            await detachWindowsDriveLetters(diskNum, registerProcess);
-            await new Promise((resolve) => setTimeout(resolve, 500));
+          // Check if the drive is already prepared (GPT, FAT32, labeled OPENCORE)
+          let driveLetter = await getWindowsDriveLetterForLabel(diskNum, 'OPENCORE', registerProcess);
+          if (driveLetter) {
+            log('INFO', 'usb-flash', 'Found existing OPENCORE volume — reusing prepared drive', { diskNum, driveLetter });
+            onPhase('format', `Using existing OPENCORE partition on disk ${diskNum}`);
           }
 
-          let driveLetter = '';
-          let lastDiskpartError: Error | null = null;
-          const maxDiskpartAttempts = 2;
-          for (let attempt = 0; attempt < maxDiskpartAttempts; attempt += 1) {
-            onPhase('format', attempt === 0
-              ? `Running diskpart on disk ${diskNum}`
-              : `Retrying disk ${diskNum} after clearing stale Windows mounts`);
-            checkAborted();
-            log('DEBUG', 'usb-flash', 'Running diskpart', { diskNum, attempt: attempt + 1 });
-            let diskpartFailed = false;
-            try {
-              await runCmd(`diskpart /s "${scriptPath}"`, registerProcess);
-              lastDiskpartError = null;
-            } catch (error) {
-              diskpartFailed = true;
-              lastDiskpartError = error as Error;
-              log('WARN', 'usb-flash', 'diskpart reported an error while preparing the USB; checking whether the partition was created anyway', {
-                diskNum,
-                attempt: attempt + 1,
-                error: (error as Error).message,
-              });
+          if (!driveLetter) {
+            // Need to prepare the drive with diskpart
+            const mountedPartitions = await getMountedPartitions(device).catch(() => [] as string[]);
+            if (mountedPartitions.length > 0) {
+              onPhase('erase', `Detaching mounted volumes from disk ${diskNum}`);
+              log('WARN', 'usb-flash', 'Detaching mounted Windows volumes before flash', { diskNum, mountedPartitions });
+              await detachWindowsDriveLetters(diskNum, registerProcess);
+              await new Promise((resolve) => setTimeout(resolve, 500));
             }
 
-            driveLetter = await waitForWindowsDriveLetterForLabel(diskNum, 'OPENCORE', registerProcess);
+            const script = buildWindowsFlashDiskpartScript(diskNum, partitionSizeMB);
+            const scriptPath = path.join(os.tmpdir(), `oc-diskpart-${crypto.randomUUID()}.txt`);
+            fs.writeFileSync(scriptPath, script);
+
+            let lastDiskpartError: Error | null = null;
+            const maxDiskpartAttempts = 2;
+            for (let attempt = 0; attempt < maxDiskpartAttempts; attempt += 1) {
+              onPhase('format', attempt === 0
+                ? `Running diskpart on disk ${diskNum}`
+                : `Retrying disk ${diskNum} after clearing stale Windows mounts`);
+              checkAborted();
+              log('DEBUG', 'usb-flash', 'Running diskpart', { diskNum, attempt: attempt + 1 });
+              let diskpartFailed = false;
+              try {
+                await runCmd(`diskpart /s "${scriptPath}"`, registerProcess);
+                lastDiskpartError = null;
+              } catch (error) {
+                diskpartFailed = true;
+                lastDiskpartError = error as Error;
+                log('WARN', 'usb-flash', 'diskpart reported an error', {
+                  diskNum,
+                  attempt: attempt + 1,
+                  error: (error as Error).message,
+                });
+              }
+
+              // Verify partition actually exists before trying to look up the volume label.
+              // If diskpart failed AND no partition was created, fail immediately instead of
+              // stalling for 60s waiting for a volume that will never appear.
+              const hasPartitions = await windowsDiskHasPartitions(diskNum, registerProcess);
+              if (!hasPartitions) {
+                if (diskpartFailed) {
+                  // Diskpart failed and left no partitions — retry or fail now
+                  if (shouldRetryWindowsFlashPreparation({ attempt, maxAttempts: maxDiskpartAttempts, diskpartFailed, driveLetter: '' })) {
+                    log('WARN', 'usb-flash', 'No partitions after diskpart failure — retrying', { diskNum, attempt: attempt + 1 });
+                    await detachWindowsDriveLetters(diskNum, registerProcess).catch(() => {});
+                    await new Promise((resolve) => setTimeout(resolve, 700));
+                    continue;
+                  }
+                  throw new Error(
+                    `diskpart failed to create a partition on disk ${diskNum}. ` +
+                    'The drive may be locked by another process (Explorer, antivirus, or another app). ' +
+                    'Close all programs using this drive, unplug and reconnect it, then try again. ' +
+                    'If it keeps failing, open an elevated Command Prompt and run: diskpart → select disk ' + diskNum + ' → clean → convert gpt → create partition primary → format fs=fat32 quick label=OPENCORE → assign'
+                  );
+                }
+                // Diskpart returned success but no partitions — wait briefly for OS to register them
+                log('WARN', 'usb-flash', 'Diskpart succeeded but no partitions detected yet — waiting', { diskNum });
+                await new Promise((resolve) => setTimeout(resolve, 1500));
+              }
+
+              driveLetter = await waitForWindowsDriveLetterForLabel(diskNum, 'OPENCORE', registerProcess);
+              if (!driveLetter) {
+                driveLetter = await assignWindowsDriveLetter(diskNum, 'OPENCORE', registerProcess);
+              }
+              if (driveLetter) break;
+              if (!shouldRetryWindowsFlashPreparation({
+                attempt,
+                maxAttempts: maxDiskpartAttempts,
+                diskpartFailed,
+                driveLetter,
+              })) {
+                break;
+              }
+              log('WARN', 'usb-flash', 'Retrying diskpart after stale Windows mount cleanup', { diskNum, attempt: attempt + 1 });
+              await detachWindowsDriveLetters(diskNum, registerProcess).catch(() => {});
+              await new Promise((resolve) => setTimeout(resolve, 700));
+            }
+
+            try { fs.unlinkSync(scriptPath); } catch {}
+
+            if (!driveLetter && lastDiskpartError) {
+              throw new Error(
+                `diskpart could not prepare disk ${diskNum}. ` +
+                'Close all programs using this drive, unplug and reconnect it, then try again.'
+              );
+            }
             if (!driveLetter) {
-              driveLetter = await assignWindowsDriveLetter(diskNum, 'OPENCORE', registerProcess);
+              const hasAnyParts = await windowsDiskHasPartitions(diskNum, registerProcess);
+              throw new Error(
+                hasAnyParts
+                  ? `Disk ${diskNum} has a partition but Windows did not assign a drive letter to it. ` +
+                    'This usually means another process (Explorer, antivirus, backup software) is holding a lock. ' +
+                    'Unplug the drive, wait 5 seconds, reconnect it, and try again. ' +
+                    'If it keeps failing, open Disk Management (diskmgmt.msc) and right-click the partition → Change Drive Letter.'
+                  : `diskpart could not create a usable partition on disk ${diskNum}. ` +
+                    'The drive may be hardware write-protected, failing, or locked by another process. ' +
+                    'Try a different USB port or drive. ' +
+                    'Manual recovery: open an elevated Command Prompt and run: diskpart → select disk ' + diskNum + ' → clean → convert gpt → create partition primary → format fs=fat32 quick label=OPENCORE → assign'
+              );
             }
-            if (driveLetter) break;
-            if (!shouldRetryWindowsFlashPreparation({
-              attempt,
-              maxAttempts: maxDiskpartAttempts,
-              diskpartFailed,
-              driveLetter,
-            })) {
-              break;
-            }
-            log('WARN', 'usb-flash', 'Retrying diskpart after stale Windows mount cleanup', { diskNum, attempt: attempt + 1 });
-            await detachWindowsDriveLetters(diskNum, registerProcess).catch(() => {});
-            await new Promise((resolve) => setTimeout(resolve, 700));
           }
-
-          if (!driveLetter && lastDiskpartError) {
-            throw new Error(`diskpart could not prepare disk ${diskNum}. Close Explorer windows or antivirus scans on that USB, unplug and reconnect it, then try again.`);
-          }
-          if (!driveLetter) throw new Error(`Could not determine drive letter for disk ${diskNum} — diskpart may have failed or Windows has not mounted the new volume yet`);
 
           onPhase('copy', `Copying EFI to ${driveLetter}:`);
           checkAborted();
@@ -1120,8 +1199,8 @@ export function createDiskOps(log: LogFunction): DiskOps {
           if (fs.existsSync(recoveryDir) && !fs.existsSync(path.join(`${driveLetter}:`, 'com.apple.recovery.boot', 'BaseSystem.dmg'))) {
             throw new Error('Verification failed: com.apple.recovery.boot\\BaseSystem.dmg not found on USB after copy');
           }
-        } finally {
-          try { fs.unlinkSync(scriptPath); } catch {}
+        } catch (e) {
+          throw e;
         }
       } else {
         throw new Error(`flashUsb: unsupported platform ${process.platform}`);

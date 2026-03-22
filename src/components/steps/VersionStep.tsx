@@ -62,12 +62,20 @@ export default function VersionStep({
             </div>
 
             <div className="flex flex-col gap-2 lg:min-w-[200px]">
-              {onUseRecommendedVersion && selectedVersion !== recommendedRow.versionName && (
+              {onUseRecommendedVersion && selectedVersion !== recommendedRow.versionName ? (
                 <button
                   onClick={onUseRecommendedVersion}
-                  className={`inline-flex items-center justify-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-bold text-slate-950 transition-all ${recommendedPalette.buttonHoverClassName}`}
+                  className={`inline-flex items-center justify-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-bold text-slate-950 transition-all cursor-pointer ${recommendedPalette.buttonHoverClassName}`}
                 >
                   Use {recommendedRow.versionName}
+                  <ArrowRight className="h-4 w-4" />
+                </button>
+              ) : onSelect && (
+                <button
+                  onClick={() => onSelect(recommendedRow.versionName)}
+                  className={`inline-flex items-center justify-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-bold text-slate-950 transition-all cursor-pointer ${recommendedPalette.buttonHoverClassName}`}
+                >
+                  Continue with {recommendedRow.versionName}
                   <ArrowRight className="h-4 w-4" />
                 </button>
               )}
@@ -112,7 +120,7 @@ export default function VersionStep({
           {onUseRecommendedVersion && (
             <button
               onClick={onUseRecommendedVersion}
-              className="rounded-2xl bg-amber-500 px-4 py-2.5 text-sm font-bold text-black transition-all hover:bg-amber-400"
+              className="rounded-2xl bg-amber-500 px-4 py-2.5 text-sm font-bold text-black transition-all hover:bg-amber-400 cursor-pointer"
             >
               Use Recommended Version
             </button>

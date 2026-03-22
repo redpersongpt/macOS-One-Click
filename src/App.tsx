@@ -1161,7 +1161,7 @@ export default function App() {
     }
 
     let cancelled = false;
-    setResourcePlan(null);
+    // Keep showing the previous plan while the new one loads (avoid blank flash)
     window.electron.getResourcePlan(profile, efiPath)
       .then((plan) => {
         if (!cancelled) {
@@ -3334,7 +3334,7 @@ export default function App() {
                         </div>
                       </div>
                     ) : (
-                      <ProgressStep native title="Preparing Installation" subtitle={`Setting up ${profile?.targetOS || 'the OS'} for your hardware.`} icon={Package} progress={recovPct} statusText={recovStatus || 'Connecting…'} notice={step === 'recovery-download' ? buildProgressNotice : null} stages={recovStages} />
+                      <ProgressStep native title="Downloading Recovery Image" subtitle={`Fetching the ${profile?.targetOS || 'macOS'} recovery image (~700 MB). The full OS installs later from this image.`} icon={Package} progress={recovPct} statusText={recovStatus || 'Connecting…'} notice={step === 'recovery-download' ? buildProgressNotice : null} stages={recovStages} />
                     )}
                   </motion.div>
                 )}

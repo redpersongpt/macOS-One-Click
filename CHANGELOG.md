@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.4.7 - 2026-03-22
+
+### Windows flash and GPT detection fix (#15, #16, #17)
+- Fixed GPT detection on Windows: `Get-Disk` now targets the specific disk number and wraps in try/catch so GPT drives are no longer misreported as "unknown partition table."
+- Improved diskpart error handling: silent `.catch(() => {})` on drive-letter assignment replaced with logged error path; retry window widened from 12×500ms to 20×400ms.
+- Final flash error now distinguishes "partition exists but no letter" from "no partition created at all."
+- Added structured error entries for diskpart prep failure and drive-letter assignment failure with actionable remediation copy.
+- SMBIOS recomputed on target OS change so Tahoe builds get the correct model.
+- SSDT sourcing reads real AML from OpenCore package instead of empty placeholder files.
+- VersionStep: "Use {version}" vs "Continue with {version}" button logic; cursor-pointer on all interactive buttons.
+- Resource plan no longer blanks while a new plan loads — keeps previous plan visible.
+- Recovery download step shows accurate 700 MB copy instead of implying full OS size.
+
+### Test coverage
+- Added 7 new test files covering diskOps safety commands, structured error classification, flash safety gates, kext source policy, release flow SMBIOS, config generator, and VersionStep button states.
+
 ## 2.4.6 - 2026-03-22
 
 ### Codeless kext validation fix (#13)

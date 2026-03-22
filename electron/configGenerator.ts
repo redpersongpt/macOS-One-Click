@@ -10,6 +10,11 @@ import {
     type HardwareGpuDeviceSummary,
 } from './hackintoshRules.js';
 
+// Kexts that have no binary (Info.plist only) — must use empty ExecutablePath in config.plist
+const CODELESS_KEXTS = new Set([
+    'AppleMCEReporterDisabler.kext',
+]);
+
 // --- Types ---
 
 export interface HardwareProfile {
@@ -494,7 +499,7 @@ export function generateConfigPlist(profile: HardwareProfile): string {
     const osVer = parseMacOSVersion(profile.targetOS);
     const gpuDevices = getProfileGpuDevices(profile);
 
-    const audioLayoutId = profile.audioLayoutId || 1;
+    const audioLayoutId = profile.audioLayoutId ?? 1;
     let bootArgs = profile.bootArgs;
 
     if (profile.strategy === 'conservative') {
@@ -657,17 +662,20 @@ export function generateConfigPlist(profile: HardwareProfile): string {
     <dict>
         <key>Add</key>
         <array>
-            ${kexts.map(kext => `
+            ${kexts.map(kext => {
+                const isCodeless = CODELESS_KEXTS.has(kext);
+                return `
             <dict>
                 <key>Arch</key><string>Any</string>
                 <key>BundlePath</key><string>${kext}</string>
                 <key>Comment</key><string>${kext}</string>
                 <key>Enabled</key><true/>
-                <key>ExecutablePath</key><string>Contents/MacOS/${kext.replace('.kext', '')}</string>
+                <key>ExecutablePath</key><string>${isCodeless ? '' : `Contents/MacOS/${kext.replace('.kext', '')}`}</string>
                 <key>MaxKernel</key><string></string>
                 <key>MinKernel</key><string></string>
                 <key>PlistPath</key><string>Contents/Info.plist</string>
-            </dict>`).join('')}
+            </dict>`;
+            }).join('')}
         </array>
         <key>Block</key><array/>
         <key>Emulate</key>

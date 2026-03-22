@@ -1212,7 +1212,7 @@ async function ensureOpenCoreBinaries(
   basePath: string,
   token?: OpToken,
   onPhase?: (phase: string, detail: string) => void,
-) {
+): Promise<{ ocExtractedDir: string }> {
   const cacheDir = path.resolve(app.getPath('userData'), 'OpenCore_Cache');
   const ocVersion = '1.0.3';
   const ocUrl = `https://github.com/acidanthera/OpenCorePkg/releases/download/${ocVersion}/OpenCore-${ocVersion}-RELEASE.zip`;
@@ -1290,6 +1290,7 @@ async function ensureOpenCoreBinaries(
   } else {
     throw new Error('Standard OpenCore EFI structure not found in extracted package.');
   }
+  return { ocExtractedDir: ocExtracted };
 }
 
 async function createEfiStructure(
@@ -1298,7 +1299,7 @@ async function createEfiStructure(
   token?: OpToken,
   onPhase?: (phase: string, detail: string) => void,
 ) {
-  await ensureOpenCoreBinaries(basePath, token, onPhase);
+  const { ocExtractedDir } = await ensureOpenCoreBinaries(basePath, token, onPhase);
 
   const { kexts, ssdts } = getRequiredResources(profile);
   const dirs = [
@@ -1319,11 +1320,40 @@ async function createEfiStructure(
   onPhase?.('Writing OpenCore configuration…', `Generating config.plist for ${profile.smbios}.`);
   const configContent = generateConfigPlist(profile);
   fs.writeFileSync(path.resolve(basePath, 'EFI/OC/config.plist'), configContent);
-  onPhase?.('Preparing ACPI and kext placeholders…', `${ssdts.length} SSDT entries and ${kexts.length} kext folders queued.`);
-  ssdts.forEach(s => {
-    const p = path.resolve(basePath, 'EFI/OC/ACPI', s);
-    if (!fs.existsSync(p)) fs.writeFileSync(p, '');
-  });
+
+  // Source SSDTs from the OpenCore package's pre-compiled samples
+  const ssdtSampleDirs = [
+    path.resolve(ocExtractedDir, 'Docs', 'AcpiSamples', 'Binaries'),
+    path.resolve(ocExtractedDir, 'Docs', 'AcpiSamples'),
+  ];
+  onPhase?.('Placing ACPI tables…', `${ssdts.length} SSDT files required.`);
+  const missingSsdts: string[] = [];
+  for (const s of ssdts) {
+    const destPath = path.resolve(basePath, 'EFI/OC/ACPI', s);
+    if (fs.existsSync(destPath) && fs.statSync(destPath).size > 0) continue;
+    let found = false;
+    for (const sampleDir of ssdtSampleDirs) {
+      const src = path.resolve(sampleDir, s);
+      if (fs.existsSync(src) && fs.statSync(src).size > 0) {
+        fs.copyFileSync(src, destPath);
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      missingSsdts.push(s);
+      log('ERROR', 'efi', `Required SSDT not found in OpenCore package: ${s}`, {
+        searchedDirs: ssdtSampleDirs,
+      });
+    }
+  }
+  if (missingSsdts.length > 0) {
+    throw new Error(
+      `EFI build failed: required SSDT files are missing from the OpenCore package: ${missingSsdts.join(', ')}. ` +
+      'The OpenCore cache may be corrupt — try deleting the OpenCore_Cache folder and rebuilding.'
+    );
+  }
+
   kexts.forEach(k => {
     const kextDir = path.resolve(basePath, 'EFI/OC/Kexts', k);
     if (!fs.existsSync(kextDir)) fs.mkdirSync(kextDir, { recursive: true });

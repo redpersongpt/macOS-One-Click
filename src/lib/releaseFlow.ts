@@ -2,7 +2,7 @@ import {
   checkCompatibility,
   type CompatibilityReport,
 } from '../../electron/compatibility.js';
-import { getBIOSSettings, type BIOSConfig, type HardwareProfile } from '../../electron/configGenerator.js';
+import { getBIOSSettings, getSMBIOSForProfile, type BIOSConfig, type HardwareProfile } from '../../electron/configGenerator.js';
 import type { ValidationResult } from '../../electron/configValidator.js';
 
 export interface RestoreFlowDecision {
@@ -49,6 +49,9 @@ export function targetSelectionDecision(
   targetOS: string,
 ): TargetSelectionDecision {
   const nextProfile: HardwareProfile = { ...profile, targetOS };
+  // Recompute SMBIOS — different macOS versions require different models
+  // (e.g. Coffee Lake + Tahoe needs iMac20,1, not iMac19,1)
+  nextProfile.smbios = getSMBIOSForProfile(nextProfile);
   const compatibility = checkCompatibility(nextProfile);
   nextProfile.strategy = compatibility.strategy;
 

@@ -541,7 +541,7 @@ export function checkCompatibility(
   }
 
   if (profile.architecture === 'Apple Silicon') {
-    report.errors.push('Apple Silicon systems already run macOS natively and are not Hackintosh targets.');
+    report.errors.push('Apple Silicon systems already run macOS natively and are not Hackintosh targets. You silly goose :) ');
     return setBlocked(report, 'Apple Silicon hardware is not a valid OpenCore/Hackintosh target.');
   }
 

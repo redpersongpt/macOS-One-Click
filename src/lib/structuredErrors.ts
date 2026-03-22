@@ -132,6 +132,26 @@ const ERROR_MAP: Array<{
     },
   },
   {
+    test: m => m.includes('diskpart failed to create') || m.includes('diskpart could not prepare'),
+    structured: {
+      title: 'Windows disk preparation failed',
+      what: 'diskpart could not create or format a partition on the selected USB drive.',
+      nextStep: 'Close all programs using this drive, unplug and reconnect it, then try again. If it keeps failing, try a different USB drive or use Disk Management to manually prepare a GPT FAT32 partition labeled OPENCORE.',
+      retryable: true,
+      retryNote: 'after reconnecting the drive',
+    },
+  },
+  {
+    test: m => m.includes('did not assign a drive letter') || m.includes('did not mount the new'),
+    structured: {
+      title: 'Windows drive letter assignment failed',
+      what: 'The partition was created but Windows could not assign a drive letter to it.',
+      nextStep: 'Unplug the drive, wait 5 seconds, reconnect it, and retry. If it persists, open Disk Management and manually assign a letter to the OPENCORE partition.',
+      retryable: true,
+      retryNote: 'after reconnecting the drive',
+    },
+  },
+  {
     test: m => m.includes('cannot read partition table') || m.includes('unknown_partition_table'),
     structured: {
       title: 'Cannot read partition table',
