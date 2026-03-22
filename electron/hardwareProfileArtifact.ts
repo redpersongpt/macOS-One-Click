@@ -144,12 +144,18 @@ export function normalizeHardwareProfile(value: unknown): HardwareProfile {
     'scanConfidence',
   ], 'profile');
 
+  const ALLOWED_ARCHITECTURES = ['Intel', 'AMD', 'Apple Silicon', 'Unknown'] as const;
   const architecture = parseRequiredString(record.architecture, 'profile.architecture');
-  if (!['Intel', 'AMD', 'Apple Silicon', 'Unknown'].includes(architecture)) {
-    throw new Error(`profile.architecture is not supported: ${architecture}`);
+  if (!(ALLOWED_ARCHITECTURES as readonly string[]).includes(architecture)) {
+    throw new Error(
+      `profile.architecture is not supported: "${architecture}". ` +
+      `Valid values are: ${ALLOWED_ARCHITECTURES.join(', ')}. ` +
+      `Set this to the CPU vendor family — for example "Intel" for any Intel processor, ` +
+      `"AMD" for any AMD processor, or "Apple Silicon" for M-series chips.`,
+    );
   }
-  const generation = parseRequiredString(record.generation, 'profile.generation');
-  const allowedGenerations: HardwareProfile['generation'][] = [
+
+  const ALLOWED_GENERATIONS: HardwareProfile['generation'][] = [
     'Penryn',
     'Bulldozer',
     'Sandy Bridge',
@@ -172,17 +178,30 @@ export function normalizeHardwareProfile(value: unknown): HardwareProfile {
     'Apple Silicon',
     'Unknown',
   ];
-  if (!allowedGenerations.includes(generation as HardwareProfile['generation'])) {
-    throw new Error(`profile.generation is not supported: ${generation}`);
+  const generation = parseRequiredString(record.generation, 'profile.generation');
+  if (!ALLOWED_GENERATIONS.includes(generation as HardwareProfile['generation'])) {
+    throw new Error(
+      `profile.generation is not supported: "${generation}". ` +
+      `Valid values are: ${ALLOWED_GENERATIONS.join(', ')}.`,
+    );
   }
 
+  const ALLOWED_STRATEGIES = ['canonical', 'conservative', 'blocked'] as const;
   const strategy = parseOptionalString(record.strategy, 'profile.strategy');
-  if (strategy && !['canonical', 'conservative', 'blocked'].includes(strategy)) {
-    throw new Error(`profile.strategy is not supported: ${strategy}`);
+  if (strategy && !(ALLOWED_STRATEGIES as readonly string[]).includes(strategy)) {
+    throw new Error(
+      `profile.strategy is not supported: "${strategy}". ` +
+      `Valid values are: ${ALLOWED_STRATEGIES.join(', ')}.`,
+    );
   }
+
+  const ALLOWED_SCAN_CONFIDENCES = ['high', 'medium', 'low'] as const;
   const scanConfidence = parseOptionalString(record.scanConfidence, 'profile.scanConfidence');
-  if (scanConfidence && !['high', 'medium', 'low'].includes(scanConfidence)) {
-    throw new Error(`profile.scanConfidence is not supported: ${scanConfidence}`);
+  if (scanConfidence && !(ALLOWED_SCAN_CONFIDENCES as readonly string[]).includes(scanConfidence)) {
+    throw new Error(
+      `profile.scanConfidence is not supported: "${scanConfidence}". ` +
+      `Valid values are: ${ALLOWED_SCAN_CONFIDENCES.join(', ')}.`,
+    );
   }
 
   const normalized: HardwareProfile = {
@@ -231,7 +250,10 @@ export function normalizeHardwareProfileInterpretationMetadata(value: unknown): 
 
   const overallConfidence = parseRequiredString(record.overallConfidence, 'interpretation.overallConfidence');
   if (!['high', 'medium', 'low'].includes(overallConfidence)) {
-    throw new Error(`interpretation.overallConfidence is not supported: ${overallConfidence}`);
+    throw new Error(
+      `interpretation.overallConfidence is not supported: "${overallConfidence}". ` +
+      `Valid values are: high, medium, low.`,
+    );
   }
 
   return {
