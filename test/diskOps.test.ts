@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
+  assessWindowsFlashPreparationState,
   buildWindowsPhysicalDrivePath,
   isWindowsUsbLikeDisk,
   getWindowsFat32PartitionSizeMB,
   shouldRetryWindowsFlashPreparation,
   buildLinuxFirstPartitionPath,
   buildWindowsFlashDiskpartScript,
+  buildWindowsBootPartitionDiskpartScript,
 } from '../electron/diskOps.js';
 
 // ─── Windows disk path normalization ─────────────────────────────────────────
@@ -113,25 +115,25 @@ describe('getWindowsFat32PartitionSizeMB', () => {
 describe('shouldRetryWindowsFlashPreparation', () => {
   it('retries on first diskpart failure with no drive letter', () => {
     expect(shouldRetryWindowsFlashPreparation({
-      attempt: 0, maxAttempts: 2, diskpartFailed: true, driveLetter: '',
+      attempt: 0, maxAttempts: 2, diskpartFailed: true, driveLetter: '', stage: 'create-partition',
     })).toBe(true);
   });
 
   it('does NOT retry on last attempt', () => {
     expect(shouldRetryWindowsFlashPreparation({
-      attempt: 1, maxAttempts: 2, diskpartFailed: true, driveLetter: '',
+      attempt: 1, maxAttempts: 2, diskpartFailed: true, driveLetter: '', stage: 'create-partition',
     })).toBe(false);
   });
 
   it('does NOT retry when diskpart succeeded', () => {
     expect(shouldRetryWindowsFlashPreparation({
-      attempt: 0, maxAttempts: 2, diskpartFailed: false, driveLetter: '',
+      attempt: 0, maxAttempts: 2, diskpartFailed: false, driveLetter: '', stage: 'create-partition',
     })).toBe(false);
   });
 
   it('does NOT retry when drive letter was assigned', () => {
     expect(shouldRetryWindowsFlashPreparation({
-      attempt: 0, maxAttempts: 2, diskpartFailed: true, driveLetter: 'E',
+      attempt: 0, maxAttempts: 2, diskpartFailed: true, driveLetter: 'E', stage: 'assign',
     })).toBe(false);
   });
 });
@@ -164,6 +166,11 @@ describe('buildWindowsFlashDiskpartScript', () => {
     const script = buildWindowsFlashDiskpartScript('0');
     expect(script).toContain('format fs=fat32 quick label=OPENCORE noerr');
   });
+
+  it('explicitly re-selects partition 1 before format', () => {
+    const script = buildWindowsFlashDiskpartScript('0');
+    expect(script).toContain('select partition 1 noerr');
+  });
 });
 
 // ─── Diskpart script input validation ────────────────────────────────────────
@@ -187,25 +194,31 @@ describe('buildWindowsFlashDiskpartScript — input validation', () => {
 describe('shouldRetryWindowsFlashPreparation — failure modes', () => {
   it('retries when diskpart failed and no drive letter', () => {
     expect(shouldRetryWindowsFlashPreparation({
-      attempt: 0, maxAttempts: 2, diskpartFailed: true, driveLetter: '',
+      attempt: 0, maxAttempts: 2, diskpartFailed: true, driveLetter: '', stage: 'format',
     })).toBe(true);
   });
 
   it('does NOT retry on last attempt even if diskpart failed', () => {
     expect(shouldRetryWindowsFlashPreparation({
-      attempt: 1, maxAttempts: 2, diskpartFailed: true, driveLetter: '',
+      attempt: 1, maxAttempts: 2, diskpartFailed: true, driveLetter: '', stage: 'assign',
     })).toBe(false);
   });
 
   it('does NOT retry when diskpart succeeded', () => {
     expect(shouldRetryWindowsFlashPreparation({
-      attempt: 0, maxAttempts: 2, diskpartFailed: false, driveLetter: '',
+      attempt: 0, maxAttempts: 2, diskpartFailed: false, driveLetter: '', stage: 'assign',
     })).toBe(false);
   });
 
   it('does NOT retry when drive letter was found despite error', () => {
     expect(shouldRetryWindowsFlashPreparation({
-      attempt: 0, maxAttempts: 2, diskpartFailed: true, driveLetter: 'E',
+      attempt: 0, maxAttempts: 2, diskpartFailed: true, driveLetter: 'E', stage: 'label-lookup',
+    })).toBe(false);
+  });
+
+  it('does NOT retry label lookup failure when a partition fallback exists', () => {
+    expect(shouldRetryWindowsFlashPreparation({
+      attempt: 0, maxAttempts: 2, diskpartFailed: true, driveLetter: 'F', stage: 'label-lookup',
     })).toBe(false);
   });
 });
@@ -237,6 +250,16 @@ describe('buildWindowsFlashDiskpartScript — safety commands', () => {
     expect(assignIdx).toBeGreaterThan(formatIdx);
   });
 
+  it('selects partition 1 between create and format', () => {
+    const script = buildWindowsFlashDiskpartScript('0');
+    const lines = script.split('\n');
+    const createIdx = lines.findIndex(l => l.startsWith('create partition primary'));
+    const selectPartitionIdx = lines.findIndex(l => l === 'select partition 1 noerr');
+    const formatIdx = lines.findIndex(l => l.includes('format fs=fat32'));
+    expect(selectPartitionIdx).toBeGreaterThan(createIdx);
+    expect(formatIdx).toBeGreaterThan(selectPartitionIdx);
+  });
+
   it('ends with rescan', () => {
     const script = buildWindowsFlashDiskpartScript('0');
     const lines = script.split('\n').filter(l => l.length > 0);
@@ -249,26 +272,136 @@ describe('buildWindowsFlashDiskpartScript — safety commands', () => {
 describe('shouldRetryWindowsFlashPreparation — boundary conditions', () => {
   it('retries at attempt 0 out of 3', () => {
     expect(shouldRetryWindowsFlashPreparation({
-      attempt: 0, maxAttempts: 3, diskpartFailed: true, driveLetter: '',
+      attempt: 0, maxAttempts: 3, diskpartFailed: true, driveLetter: '', stage: 'create-partition',
     })).toBe(true);
   });
 
   it('retries at attempt 1 out of 3', () => {
     expect(shouldRetryWindowsFlashPreparation({
-      attempt: 1, maxAttempts: 3, diskpartFailed: true, driveLetter: '',
+      attempt: 1, maxAttempts: 3, diskpartFailed: true, driveLetter: '', stage: 'format',
     })).toBe(true);
   });
 
   it('does NOT retry at attempt 2 out of 3 (last attempt)', () => {
     expect(shouldRetryWindowsFlashPreparation({
-      attempt: 2, maxAttempts: 3, diskpartFailed: true, driveLetter: '',
+      attempt: 2, maxAttempts: 3, diskpartFailed: true, driveLetter: '', stage: 'assign',
     })).toBe(false);
   });
 
   it('does NOT retry with maxAttempts=1 (single attempt only)', () => {
     expect(shouldRetryWindowsFlashPreparation({
-      attempt: 0, maxAttempts: 1, diskpartFailed: true, driveLetter: '',
+      attempt: 0, maxAttempts: 1, diskpartFailed: true, driveLetter: '', stage: 'create-partition',
     })).toBe(false);
+  });
+});
+
+describe('assessWindowsFlashPreparationState', () => {
+  it('classifies no partitions as create failure', () => {
+    const assessment = assessWindowsFlashPreparationState({
+      partitions: [],
+      expectedLabel: 'OPENCORE',
+    });
+    expect(assessment.status).toBe('failed');
+    expect(assessment.stage).toBe('create-partition');
+  });
+
+  it('classifies raw partition as format failure', () => {
+    const assessment = assessWindowsFlashPreparationState({
+      partitions: [{
+        partitionNumber: 1,
+        driveLetter: '',
+        fileSystem: '',
+        fileSystemLabel: '',
+        sizeBytes: 15_264_000_000,
+      }],
+      expectedLabel: 'OPENCORE',
+    });
+    expect(assessment.status).toBe('failed');
+    expect(assessment.stage).toBe('format');
+  });
+
+  it('classifies FAT32 partition without drive letter as assign failure', () => {
+    const assessment = assessWindowsFlashPreparationState({
+      partitions: [{
+        partitionNumber: 1,
+        driveLetter: '',
+        fileSystem: 'FAT32',
+        fileSystemLabel: 'OPENCORE',
+        sizeBytes: 15_264_000_000,
+      }],
+      expectedLabel: 'OPENCORE',
+    });
+    expect(assessment.status).toBe('failed');
+    expect(assessment.stage).toBe('assign');
+  });
+
+  it('falls back to the target partition when the label is missing but drive letter exists', () => {
+    const assessment = assessWindowsFlashPreparationState({
+      partitions: [{
+        partitionNumber: 1,
+        driveLetter: 'E',
+        fileSystem: 'FAT32',
+        fileSystemLabel: '',
+        sizeBytes: 15_264_000_000,
+      }],
+      expectedLabel: 'OPENCORE',
+    });
+    expect(assessment.status).toBe('ready');
+    expect(assessment.stage).toBe('label-lookup');
+    expect(assessment.driveLetter).toBe('E');
+    expect(assessment.usedPartitionFallback).toBe(true);
+  });
+
+  it('accepts the expected OPENCORE volume as ready', () => {
+    const assessment = assessWindowsFlashPreparationState({
+      partitions: [{
+        partitionNumber: 1,
+        driveLetter: 'F',
+        fileSystem: 'FAT32',
+        fileSystemLabel: 'OPENCORE',
+        sizeBytes: 15_264_000_000,
+      }],
+      expectedLabel: 'OPENCORE',
+    });
+    expect(assessment.status).toBe('ready');
+    expect(assessment.stage).toBeNull();
+    expect(assessment.driveLetter).toBe('F');
+  });
+
+  it('targets partition 1 before larger later partitions', () => {
+    const assessment = assessWindowsFlashPreparationState({
+      partitions: [
+        {
+          partitionNumber: 2,
+          driveLetter: 'G',
+          fileSystem: 'FAT32',
+          fileSystemLabel: 'OPENCORE',
+          sizeBytes: 30_000_000_000,
+        },
+        {
+          partitionNumber: 1,
+          driveLetter: '',
+          fileSystem: '',
+          fileSystemLabel: '',
+          sizeBytes: 1_024_000_000,
+        },
+      ],
+      expectedLabel: 'OPENCORE',
+    });
+    expect(assessment.status).toBe('failed');
+    expect(assessment.stage).toBe('format');
+    expect(assessment.targetPartitionNumber).toBe(1);
+  });
+});
+
+describe('buildWindowsBootPartitionDiskpartScript', () => {
+  it('explicitly selects partition 1 before formatting BOOTSTRAP', () => {
+    const script = buildWindowsBootPartitionDiskpartScript('4');
+    expect(script).toContain('select disk 4');
+    expect(script).toContain('create partition primary size=16384');
+    expect(script).toContain('select partition 1');
+    expect(script).toContain('format fs=fat32 quick label=BOOTSTRAP');
+    expect(script).toContain('assign');
   });
 });
 

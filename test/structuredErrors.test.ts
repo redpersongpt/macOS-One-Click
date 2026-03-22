@@ -4,7 +4,13 @@ import { structureError } from '../src/lib/structuredErrors.js';
 describe('structureError — Windows flash path errors', () => {
   it('classifies diskpart partition creation failure', () => {
     const e = structureError('diskpart failed to create a partition on disk 2');
-    expect(e.title).toContain('Windows disk preparation');
+    expect(e.title).toContain('partition creation');
+    expect(e.retryable).toBe(true);
+  });
+
+  it('classifies diskpart format failure separately', () => {
+    const e = structureError('diskpart created a partition on disk 2, but failed to format it as FAT32 OPENCORE');
+    expect(e.title).toContain('format');
     expect(e.retryable).toBe(true);
   });
 
@@ -16,6 +22,12 @@ describe('structureError — Windows flash path errors', () => {
   it('classifies drive letter assignment failure', () => {
     const e = structureError('Disk 2 has a partition but Windows did not assign a drive letter to it');
     expect(e.title).toContain('drive letter');
+    expect(e.retryable).toBe(true);
+  });
+
+  it('classifies OPENCORE label lookup failure distinctly', () => {
+    const e = structureError('Disk 2 has a FAT32 partition with a drive letter, but the OPENCORE label could not be confirmed');
+    expect(e.title).toContain('OPENCORE volume lookup');
     expect(e.retryable).toBe(true);
   });
 
@@ -49,6 +61,12 @@ describe('structureError — error classification precedence', () => {
     const dpError = structureError('diskpart failed to create a partition on disk 2');
     const flashError = structureError('flash write failed on /dev/sdb');
     expect(dpError.title).not.toBe(flashError.title);
+  });
+
+  it('format failure is distinct from partition creation failure', () => {
+    const createError = structureError('diskpart failed to create a partition on disk 2');
+    const formatError = structureError('diskpart created a partition on disk 2, but failed to format it as FAT32 OPENCORE');
+    expect(createError.title).not.toBe(formatError.title);
   });
 
   it('returns a generic fallback for unknown errors', () => {

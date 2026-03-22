@@ -2,7 +2,13 @@
 
 Project note: the app is now branded as `OpCore-OneClick`. Legacy repo/update coordinates and the persisted app-data path remain unchanged for continuity.
 
-## 2.5.5 - 2026-03-22
+## 2.5.6 - 2026-03-22
+
+### Windows flash-prep correctness fix
+- Made the Windows `diskpart` prep script explicit by re-selecting the created partition before formatting and assigning it, instead of relying on implicit focus.
+- Replaced the old “any partition exists?” + label-only lookup path with deterministic partition-state inspection on the selected disk after `diskpart`.
+- Flash prep now distinguishes real stage failures on Windows: partition creation, FAT32 format, drive-letter assignment, and OPENCORE label lookup.
+- Added a partition-based fallback when Windows creates the right FAT32 partition and drive letter but label lookup lags or comes back empty, so that case no longer masquerades as partition creation failure.
 
 ### Release workflow fix
 - Fixed the direct `gh release create` publish step by passing the repository explicitly in the publish job, which runs without a checked-out `.git` directory.

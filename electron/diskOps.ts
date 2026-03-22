@@ -165,9 +165,21 @@ export function buildWindowsFlashDiskpartScript(diskNum: string, partitionSizeMB
     partitionSizeMB && partitionSizeMB > 0
       ? `create partition primary size=${partitionSizeMB} noerr`
       : 'create partition primary noerr',
+    'select partition 1 noerr',
     'format fs=fat32 quick label=OPENCORE noerr',
     'assign noerr',
     'rescan',
+    '',
+  ].join('\n');
+}
+
+export function buildWindowsBootPartitionDiskpartScript(diskNum: string): string {
+  return [
+    `select disk ${diskNum}`,
+    'create partition primary size=16384',
+    'select partition 1',
+    'format fs=fat32 quick label=BOOTSTRAP',
+    'assign',
     '',
   ].join('\n');
 }
@@ -176,13 +188,111 @@ export function getWindowsFat32PartitionSizeMB(deviceSizeBytes: number): number 
   return deviceSizeBytes > 32_000_000_000 ? 30_000 : undefined;
 }
 
+export type WindowsFlashPreparationStage =
+  | 'create-partition'
+  | 'format'
+  | 'assign'
+  | 'label-lookup';
+
+export interface WindowsFlashPreparedPartition {
+  partitionNumber: number;
+  driveLetter: string;
+  fileSystem: string;
+  fileSystemLabel: string;
+  sizeBytes: number;
+}
+
+export interface WindowsFlashPreparationAssessment {
+  status: 'ready' | 'failed';
+  stage: WindowsFlashPreparationStage | null;
+  driveLetter: string;
+  targetPartitionNumber: number | null;
+  usedPartitionFallback: boolean;
+}
+
+export function assessWindowsFlashPreparationState(input: {
+  partitions: WindowsFlashPreparedPartition[];
+  expectedLabel: string;
+}): WindowsFlashPreparationAssessment {
+  const normalized = input.partitions
+    .map((partition) => ({
+      partitionNumber: Number(partition.partitionNumber),
+      driveLetter: String(partition.driveLetter ?? '').trim().toUpperCase(),
+      fileSystem: String(partition.fileSystem ?? '').trim().toUpperCase(),
+      fileSystemLabel: String(partition.fileSystemLabel ?? '').trim().toUpperCase(),
+      sizeBytes: Number(partition.sizeBytes ?? 0),
+    }))
+    .filter((partition) => Number.isFinite(partition.partitionNumber) && partition.partitionNumber > 0)
+    .sort((a, b) => {
+      if (a.partitionNumber === 1 && b.partitionNumber !== 1) return -1;
+      if (b.partitionNumber === 1 && a.partitionNumber !== 1) return 1;
+      if (b.sizeBytes !== a.sizeBytes) return b.sizeBytes - a.sizeBytes;
+      return a.partitionNumber - b.partitionNumber;
+    });
+
+  const target = normalized[0] ?? null;
+  if (!target) {
+    return {
+      status: 'failed',
+      stage: 'create-partition',
+      driveLetter: '',
+      targetPartitionNumber: null,
+      usedPartitionFallback: false,
+    };
+  }
+
+  if (target.fileSystem !== 'FAT32') {
+    return {
+      status: 'failed',
+      stage: 'format',
+      driveLetter: '',
+      targetPartitionNumber: target.partitionNumber,
+      usedPartitionFallback: false,
+    };
+  }
+
+  if (!target.driveLetter) {
+    return {
+      status: 'failed',
+      stage: 'assign',
+      driveLetter: '',
+      targetPartitionNumber: target.partitionNumber,
+      usedPartitionFallback: false,
+    };
+  }
+
+  const expectedLabel = String(input.expectedLabel ?? '').trim().toUpperCase();
+  const labelMatches = expectedLabel.length > 0 && target.fileSystemLabel === expectedLabel;
+  if (!labelMatches) {
+    return {
+      status: 'ready',
+      stage: 'label-lookup',
+      driveLetter: target.driveLetter,
+      targetPartitionNumber: target.partitionNumber,
+      usedPartitionFallback: true,
+    };
+  }
+
+  return {
+    status: 'ready',
+    stage: null,
+    driveLetter: target.driveLetter,
+    targetPartitionNumber: target.partitionNumber,
+    usedPartitionFallback: false,
+  };
+}
+
 export function shouldRetryWindowsFlashPreparation(input: {
   attempt: number;
   maxAttempts: number;
   diskpartFailed: boolean;
   driveLetter: string;
+  stage?: WindowsFlashPreparationStage | null;
 }): boolean {
-  return input.diskpartFailed && !input.driveLetter && input.attempt < input.maxAttempts - 1;
+  if (!input.diskpartFailed) return false;
+  if (input.driveLetter) return false;
+  if (input.attempt >= input.maxAttempts - 1) return false;
+  return input.stage === 'create-partition' || input.stage === 'format' || input.stage === 'assign';
 }
 
 export function createDiskOps(log: LogFunction): DiskOps {
@@ -258,16 +368,42 @@ export function createDiskOps(log: LogFunction): DiskOps {
     }
   }
 
-  async function windowsDiskHasPartitions(diskNum: string, register?: (child: any) => void): Promise<boolean> {
+  async function getWindowsPreparedPartitions(
+    diskNum: string,
+    register?: (child: any) => void,
+  ): Promise<WindowsFlashPreparedPartition[]> {
     try {
       const { stdout } = await runCmd(
-        `powershell -NoProfile -Command "try { (Get-Partition -DiskNumber ${diskNum} -ErrorAction Stop | Measure-Object).Count } catch { 0 }"`,
+        `powershell -NoProfile -Command "try { $parts = Get-Partition -DiskNumber ${diskNum} -ErrorAction Stop | Sort-Object PartitionNumber; $rows = foreach ($part in $parts) { $vol = $part | Get-Volume -ErrorAction SilentlyContinue; [pscustomobject]@{ PartitionNumber = $part.PartitionNumber; DriveLetter = if ($vol -and $vol.DriveLetter) { $vol.DriveLetter } elseif ($part.DriveLetter) { $part.DriveLetter } else { '' }; FileSystem = if ($vol -and $vol.FileSystem) { $vol.FileSystem } else { '' }; FileSystemLabel = if ($vol -and $vol.FileSystemLabel) { $vol.FileSystemLabel } else { '' }; SizeBytes = $part.Size } }; $rows | ConvertTo-Json -Compress } catch { '[]' }"`,
         register,
       );
-      return parseInt(stdout.trim(), 10) > 0;
+      const parsed = JSON.parse(stdout || '[]');
+      const rows = Array.isArray(parsed) ? parsed : parsed ? [parsed] : [];
+      return rows.map((row) => ({
+        partitionNumber: Number(row.PartitionNumber),
+        driveLetter: typeof row.DriveLetter === 'string' ? row.DriveLetter.trim() : '',
+        fileSystem: typeof row.FileSystem === 'string' ? row.FileSystem.trim() : '',
+        fileSystemLabel: typeof row.FileSystemLabel === 'string' ? row.FileSystemLabel.trim() : '',
+        sizeBytes: typeof row.SizeBytes === 'number' ? row.SizeBytes : Number(row.SizeBytes ?? 0),
+      })).filter((row) => Number.isFinite(row.partitionNumber) && row.partitionNumber > 0);
     } catch {
-      return false;
+      return [];
     }
+  }
+
+  async function waitForWindowsPreparedPartitions(
+    diskNum: string,
+    register?: (child: any) => void,
+    attempts = 10,
+    delayMs = 400,
+  ): Promise<WindowsFlashPreparedPartition[]> {
+    let last: WindowsFlashPreparedPartition[] = [];
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      last = await getWindowsPreparedPartitions(diskNum, register);
+      if (last.length > 0) return last;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    return last;
   }
 
   async function waitForWindowsDriveLetterForLabel(
@@ -1090,6 +1226,14 @@ export function createDiskOps(log: LogFunction): DiskOps {
             fs.writeFileSync(scriptPath, script);
 
             let lastDiskpartError: Error | null = null;
+            let lastAssessment: WindowsFlashPreparationAssessment = {
+              status: 'failed',
+              stage: 'create-partition',
+              driveLetter: '',
+              targetPartitionNumber: null,
+              usedPartitionFallback: false,
+            };
+            let lastObservedPartitions: WindowsFlashPreparedPartition[] = [];
             const maxDiskpartAttempts = 2;
             for (let attempt = 0; attempt < maxDiskpartAttempts; attempt += 1) {
               onPhase('format', attempt === 0
@@ -1111,69 +1255,98 @@ export function createDiskOps(log: LogFunction): DiskOps {
                 });
               }
 
-              // Verify partition actually exists before trying to look up the volume label.
-              // If diskpart failed AND no partition was created, fail immediately instead of
-              // stalling for 60s waiting for a volume that will never appear.
-              const hasPartitions = await windowsDiskHasPartitions(diskNum, registerProcess);
-              if (!hasPartitions) {
-                if (diskpartFailed) {
-                  // Diskpart failed and left no partitions — retry or fail now
-                  if (shouldRetryWindowsFlashPreparation({ attempt, maxAttempts: maxDiskpartAttempts, diskpartFailed, driveLetter: '' })) {
-                    log('WARN', 'usb-flash', 'No partitions after diskpart failure — retrying', { diskNum, attempt: attempt + 1 });
-                    await detachWindowsDriveLetters(diskNum, registerProcess).catch(() => {});
-                    await new Promise((resolve) => setTimeout(resolve, 700));
-                    continue;
-                  }
-                  throw new Error(
-                    `diskpart failed to create a partition on disk ${diskNum}. ` +
-                    'The drive may be locked by another process (Explorer, antivirus, or another app). ' +
-                    'Close all programs using this drive, unplug and reconnect it, then try again. ' +
-                    'If it keeps failing, open an elevated Command Prompt and run: diskpart → select disk ' + diskNum + ' → clean → convert gpt → create partition primary → format fs=fat32 quick label=OPENCORE → assign'
-                  );
+              lastObservedPartitions = await waitForWindowsPreparedPartitions(
+                diskNum,
+                registerProcess,
+                10,
+                500,
+              );
+              lastAssessment = assessWindowsFlashPreparationState({
+                partitions: lastObservedPartitions,
+                expectedLabel: 'OPENCORE',
+              });
+
+              if (lastAssessment.status === 'failed' && lastAssessment.stage === 'assign') {
+                const assignedLetter = await assignWindowsDriveLetter(diskNum, 'OPENCORE', registerProcess);
+                if (assignedLetter) {
+                  lastObservedPartitions = await getWindowsPreparedPartitions(diskNum, registerProcess);
+                  lastAssessment = assessWindowsFlashPreparationState({
+                    partitions: lastObservedPartitions,
+                    expectedLabel: 'OPENCORE',
+                  });
                 }
-                // Diskpart returned success but no partitions — wait briefly for OS to register them
-                log('WARN', 'usb-flash', 'Diskpart succeeded but no partitions detected yet — waiting', { diskNum });
-                await new Promise((resolve) => setTimeout(resolve, 1500));
               }
 
-              driveLetter = await waitForWindowsDriveLetterForLabel(diskNum, 'OPENCORE', registerProcess);
-              if (!driveLetter) {
-                driveLetter = await assignWindowsDriveLetter(diskNum, 'OPENCORE', registerProcess);
+              if (lastAssessment.status === 'ready') {
+                driveLetter = lastAssessment.driveLetter;
+                if (lastAssessment.usedPartitionFallback) {
+                  log('WARN', 'usb-flash', 'Using partition-based drive letter fallback after OPENCORE label lookup failed', {
+                    diskNum,
+                    partitionNumber: lastAssessment.targetPartitionNumber,
+                    driveLetter,
+                    partitions: lastObservedPartitions,
+                  });
+                }
+                break;
               }
-              if (driveLetter) break;
+
               if (!shouldRetryWindowsFlashPreparation({
                 attempt,
                 maxAttempts: maxDiskpartAttempts,
                 diskpartFailed,
-                driveLetter,
+                driveLetter: '',
+                stage: lastAssessment.stage,
               })) {
                 break;
               }
-              log('WARN', 'usb-flash', 'Retrying diskpart after stale Windows mount cleanup', { diskNum, attempt: attempt + 1 });
+              log('WARN', 'usb-flash', 'Retrying diskpart after Windows flash preparation failure', {
+                diskNum,
+                attempt: attempt + 1,
+                stage: lastAssessment.stage,
+                partitions: lastObservedPartitions,
+              });
               await detachWindowsDriveLetters(diskNum, registerProcess).catch(() => {});
               await new Promise((resolve) => setTimeout(resolve, 700));
             }
 
             try { fs.unlinkSync(scriptPath); } catch {}
 
-            if (!driveLetter && lastDiskpartError) {
-              throw new Error(
-                `diskpart could not prepare disk ${diskNum}. ` +
-                'Close all programs using this drive, unplug and reconnect it, then try again.'
-              );
-            }
             if (!driveLetter) {
-              const hasAnyParts = await windowsDiskHasPartitions(diskNum, registerProcess);
+              if (lastAssessment.stage === 'create-partition') {
+                throw new Error(
+                  `diskpart failed to create a partition on disk ${diskNum}. ` +
+                  'The selected disk never produced a visible partition after the cleanup and GPT conversion steps. ' +
+                  'Close all programs using this drive, unplug and reconnect it, then try again. ' +
+                  'If it keeps failing, open an elevated Command Prompt and run: diskpart → select disk ' + diskNum + ' → clean → convert gpt → create partition primary → select partition 1 → format fs=fat32 quick label=OPENCORE → assign'
+                );
+              }
+              if (lastAssessment.stage === 'format') {
+                throw new Error(
+                  `diskpart created a partition on disk ${diskNum}, but failed to format it as FAT32 OPENCORE. ` +
+                  'The partition exists, but Windows did not report a FAT32 volume on it after diskpart finished. ' +
+                  'Close Explorer windows, antivirus scans, or backup tools touching this drive, then retry. ' +
+                  'If it keeps failing, format partition 1 manually as FAT32 and label it OPENCORE before retrying.'
+                );
+              }
+              if (lastAssessment.stage === 'assign') {
+                throw new Error(
+                  `Disk ${diskNum} has a FAT32 OPENCORE partition, but Windows did not assign a drive letter to it. ` +
+                  'This usually means another process is holding a lock on the new volume. ' +
+                  'Unplug the drive, wait 5 seconds, reconnect it, and try again. ' +
+                  'If it keeps failing, open Disk Management (diskmgmt.msc) and manually assign a drive letter to partition 1.'
+                );
+              }
+              if (lastAssessment.stage === 'label-lookup') {
+                throw new Error(
+                  `Disk ${diskNum} has a FAT32 partition with a drive letter, but the OPENCORE label could not be confirmed. ` +
+                  'The app will not guess at an unlabeled volume on a destructive path. ' +
+                  'Rename the new volume to OPENCORE in Disk Management, then retry.'
+                );
+              }
               throw new Error(
-                hasAnyParts
-                  ? `Disk ${diskNum} has a partition but Windows did not assign a drive letter to it. ` +
-                    'This usually means another process (Explorer, antivirus, backup software) is holding a lock. ' +
-                    'Unplug the drive, wait 5 seconds, reconnect it, and try again. ' +
-                    'If it keeps failing, open Disk Management (diskmgmt.msc) and right-click the partition → Change Drive Letter.'
-                  : `diskpart could not create a usable partition on disk ${diskNum}. ` +
-                    'The drive may be hardware write-protected, failing, or locked by another process. ' +
-                    'Try a different USB port or drive. ' +
-                    'Manual recovery: open an elevated Command Prompt and run: diskpart → select disk ' + diskNum + ' → clean → convert gpt → create partition primary → format fs=fat32 quick label=OPENCORE → assign'
+                lastDiskpartError
+                  ? `diskpart could not prepare disk ${diskNum}. ${lastDiskpartError.message}`
+                  : `diskpart could not prepare disk ${diskNum}. Close all programs using this drive, unplug and reconnect it, then try again.`
               );
             }
           }
@@ -1249,7 +1422,7 @@ export function createDiskOps(log: LogFunction): DiskOps {
     if (process.platform === 'win32') {
       const diskNum = getWindowsDiskNumber(disk);
       if (!diskNum) throw new Error(`Invalid disk identifier: ${disk}`);
-      const script = `select disk ${diskNum}\ncreate partition primary size=16384\nformat fs=fat32 quick label=BOOTSTRAP\nassign\n`;
+      const script = buildWindowsBootPartitionDiskpartScript(diskNum);
       const scriptPath = path.join(os.tmpdir(), `create-part-${crypto.randomUUID()}.txt`);
       fs.writeFileSync(scriptPath, script);
 

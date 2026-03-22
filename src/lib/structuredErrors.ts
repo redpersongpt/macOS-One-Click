@@ -132,10 +132,20 @@ const ERROR_MAP: Array<{
     },
   },
   {
-    test: m => m.includes('diskpart failed to create') || m.includes('diskpart could not prepare'),
+    test: m => m.includes('diskpart failed to create'),
     structured: {
-      title: 'Windows disk preparation failed',
-      what: 'diskpart could not create or format a partition on the selected USB drive.',
+      title: 'Windows partition creation failed',
+      what: 'diskpart did not leave a visible partition on the selected USB drive.',
+      nextStep: 'Close all programs using this drive, unplug and reconnect it, then try again. If it keeps failing, use diskpart or Disk Management to create a GPT primary partition before retrying.',
+      retryable: true,
+      retryNote: 'after reconnecting the drive',
+    },
+  },
+  {
+    test: m => m.includes('failed to format it as fat32 opencore'),
+    structured: {
+      title: 'Windows partition format failed',
+      what: 'diskpart created a partition, but Windows did not report it as a FAT32 OPENCORE volume.',
       nextStep: 'Close all programs using this drive, unplug and reconnect it, then try again. If it keeps failing, try a different USB drive or use Disk Management to manually prepare a GPT FAT32 partition labeled OPENCORE.',
       retryable: true,
       retryNote: 'after reconnecting the drive',
@@ -147,6 +157,25 @@ const ERROR_MAP: Array<{
       title: 'Windows drive letter assignment failed',
       what: 'The partition was created but Windows could not assign a drive letter to it.',
       nextStep: 'Unplug the drive, wait 5 seconds, reconnect it, and retry. If it persists, open Disk Management and manually assign a letter to the OPENCORE partition.',
+      retryable: true,
+      retryNote: 'after reconnecting the drive',
+    },
+  },
+  {
+    test: m => m.includes('opencore label could not be confirmed'),
+    structured: {
+      title: 'Windows OPENCORE volume lookup failed',
+      what: 'The new FAT32 partition exists, but the OPENCORE label could not be confirmed on it.',
+      nextStep: 'Rename the partition to OPENCORE in Disk Management, then retry the flash.',
+      retryable: true,
+    },
+  },
+  {
+    test: m => m.includes('diskpart could not prepare'),
+    structured: {
+      title: 'Windows disk preparation failed',
+      what: 'diskpart could not finish preparing the selected USB drive.',
+      nextStep: 'Close all programs using this drive, unplug and reconnect it, then try again. If it keeps failing, try a different USB drive or manually prepare the GPT FAT32 OPENCORE partition first.',
       retryable: true,
       retryNote: 'after reconnecting the drive',
     },
