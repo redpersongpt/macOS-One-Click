@@ -624,16 +624,16 @@ export function checkCompatibility(
       applyAdvisoryLevel(
         report,
         'risky',
-        `The current scan did not confirm a supported GPU/output path, but documented community SUCCESS posts exist for similar ${profile.isLaptop ? `${profile.generation} laptops` : `${profile.generation} desktops`}.${buildCommunityNote(communityEvidence)} Planning can continue as a risky path while you manually verify the active graphics path and framebuffer assumptions.`,
-        'Current scan could not confirm the supported display path. Similar community-documented systems have booted macOS, but you must manually verify the active graphics path before trusting the build.',
+        `The scan did not confirm a supported display path, but similar ${profile.isLaptop ? `${profile.generation} laptops` : `${profile.generation} desktops`} do have documented community builds.${buildCommunityNote(communityEvidence)} Planning can stay open as a risky path while you verify the real display route yourself.`,
+        'The scan could not confirm the active display path. Verify the real GPU and output route before you trust this build.',
       );
     } else if (canUseLegacyIntelFallback) {
       advisoryFallbackCeiling = cpuCeiling ?? 12;
       applyAdvisoryLevel(
         report,
         'risky',
-        `The current scan did not confirm a supported GPU/output path, but this older Intel platform still has planning value for community-style manual builds. The app will keep the path open as risky, capped conservatively to older macOS targets, while you verify the real display route yourself.${buildCommunityNote(report.communityEvidence)}`,
-        'Current scan could not confirm the supported display path. This older Intel system stays open for risky planning only, with an intentionally conservative macOS ceiling.',
+        `The scan did not confirm a supported display path, but this older Intel system is still worth planning for manual community-style builds. The app keeps the path open as risky and caps it to older macOS targets while you verify the real display route yourself.${buildCommunityNote(report.communityEvidence)}`,
+        'The scan could not confirm the active display path. This older Intel system stays open for risky planning only, with a conservative macOS ceiling.',
       );
     } else {
       if (unsupportedGpuNames.length > 0) {
@@ -785,11 +785,11 @@ export function checkCompatibility(
       && ['Coffee Lake', 'Comet Lake', 'Rocket Lake'].includes(profile.generation)
       && bestAnyDisplayPath
     ) {
-      report.explanation = `Intel ${profile.generation} system with a supported display path. This is a strong canonical OpenCore target.`;
+      report.explanation = `Intel ${profile.generation} system with a supported display path. This is a solid OpenCore starting point.`;
     } else if (profile.architecture === 'AMD' && !profile.isLaptop && bestAnyDisplayPath) {
-      report.explanation = 'AMD desktop path detected. CPU support is viable, and the active AMD display path stays within the canonical OpenCore target class.';
+      report.explanation = 'AMD desktop with a supported display path. This is a solid OpenCore starting point.';
     } else if (bestAnyDisplayPath) {
-      report.explanation = `Supported display path detected through ${bestAnyDisplayPath.name}. This remains within the normal OpenCore planning path.`;
+      report.explanation = `Supported display path detected through ${bestAnyDisplayPath.name}. This stays within the normal OpenCore path.`;
     }
   }
 

@@ -101,7 +101,7 @@ export default function ReportStep({
   onContinue,
 }: ReportStepProps) {
   const [showInterpretation, setShowInterpretation] = useState(false);
-  const [busyAction, setBusyAction] = useState<'import' | 'save' | 'export' | 'scan' | null>(null);
+  const [busyAction, setBusyAction] = useState<'import' | 'save' | 'export' | 'scan' | 'simulate' | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const isBadNVMe = profile.motherboard.toLowerCase().includes('pm981') || profile.motherboard.toLowerCase().includes('pm991') || profile.motherboard.toLowerCase().includes('2200s') || profile.motherboard.toLowerCase().includes('600p');
@@ -126,12 +126,12 @@ export default function ReportStep({
       return `${cpuPart} with ${gpuPart} — this hardware remains blocked for Hackintosh planning.`;
     }
     if (report.level === 'supported') {
-      return `${cpuPart} with ${gpuPart} targeting ${osTarget} — this is a well-proven configuration.`;
+      return `${cpuPart} with ${gpuPart} targeting ${osTarget} — this is a solid starting point.`;
     }
     if (report.level === 'experimental') {
-      return `${cpuPart} with ${gpuPart} targeting ${osTarget} — viable, but expect an older or tweak-heavy community path rather than a clean canonical build.`;
+      return `${cpuPart} with ${gpuPart} targeting ${osTarget} — usable, but expect extra tuning.`;
     }
-    return `${cpuPart} with ${gpuPart} targeting ${osTarget} — risky community path. Planning can continue, but manual fixes are likely.`;
+    return `${cpuPart} with ${gpuPart} targeting ${osTarget} — it can work, but expect manual fixes.`;
   })();
 
   const planningStatusCopy = planningProfileContext === 'imported_artifact'
@@ -140,7 +140,7 @@ export default function ReportStep({
     ? 'Restored planning profile'
     : 'Live hardware scan';
 
-  const runAction = async (action: 'import' | 'save' | 'export' | 'scan', runner: () => Promise<void> | void) => {
+  const runAction = async (action: 'import' | 'save' | 'export' | 'scan' | 'simulate', runner: () => Promise<void> | void) => {
     if (busyAction) return;
     setBusyAction(action);
     setActionError(null);
@@ -154,24 +154,24 @@ export default function ReportStep({
   };
 
   return (
-    <div className="h-full flex flex-col space-y-5">
-      <div className="flex-shrink-0 flex items-start justify-between">
-        <div>
+    <div className="space-y-5 pb-8">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+        <div className="min-w-0">
           <h2 className="text-4xl font-bold text-white mb-2">Your Hardware</h2>
           <motion.p
             initial={{ opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.15 }}
-            className="text-white/50 text-sm font-medium leading-relaxed max-w-lg"
+            className="max-w-2xl text-sm font-medium leading-relaxed text-white/50"
           >
             {verdictSentence}
           </motion.p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 xl:justify-end">
           <button
             onClick={() => void runAction('import', onImportProfile)}
             disabled={busyAction !== null}
-            className="px-3 py-2 rounded-xl border border-white/10 bg-white/4 text-[11px] font-semibold text-white/70 hover:text-white hover:bg-white/8 transition-colors cursor-pointer flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex min-w-0 items-center gap-2 rounded-xl border border-white/10 bg-white/4 px-3 py-2 text-[11px] font-semibold text-white/70 transition-colors hover:bg-white/8 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Upload className="w-3.5 h-3.5" />
             {busyAction === 'import' ? 'Importing…' : 'Import Profile'}
@@ -179,7 +179,7 @@ export default function ReportStep({
           <button
             onClick={() => void runAction('save', onSaveProfile)}
             disabled={busyAction !== null}
-            className="px-3 py-2 rounded-xl border border-white/10 bg-white/4 text-[11px] font-semibold text-white/70 hover:text-white hover:bg-white/8 transition-colors cursor-pointer flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex min-w-0 items-center gap-2 rounded-xl border border-white/10 bg-white/4 px-3 py-2 text-[11px] font-semibold text-white/70 transition-colors hover:bg-white/8 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Save className="w-3.5 h-3.5" />
             {busyAction === 'save' ? 'Saving…' : 'Save Profile'}
@@ -187,18 +187,18 @@ export default function ReportStep({
           <button
             onClick={() => void runAction('export', onExportProfile)}
             disabled={busyAction !== null}
-            className="px-3 py-2 rounded-xl border border-white/10 bg-white/4 text-[11px] font-semibold text-white/70 hover:text-white hover:bg-white/8 transition-colors cursor-pointer flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex min-w-0 items-center gap-2 rounded-xl border border-white/10 bg-white/4 px-3 py-2 text-[11px] font-semibold text-white/70 transition-colors hover:bg-white/8 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Download className="w-3.5 h-3.5" />
             {busyAction === 'export' ? 'Exporting…' : 'Export Profile'}
           </button>
           <button
-            onClick={() => void onRunSimulation()}
-            disabled={simulationRunning}
-            className={`px-3 py-2 rounded-xl border text-[11px] font-semibold transition-colors flex items-center gap-2 ${simulationRunning ? 'cursor-wait border-blue-500/20 bg-blue-500/10 text-blue-200/70' : 'cursor-pointer border-white/10 bg-white/4 text-white/70 hover:text-white hover:bg-white/8'}`}
+            onClick={() => void runAction('simulate', onRunSimulation)}
+            disabled={busyAction !== null || simulationRunning}
+            className={`inline-flex min-w-0 items-center gap-2 rounded-xl border px-3 py-2 text-[11px] font-semibold transition-colors ${simulationRunning || busyAction === 'simulate' ? 'cursor-wait border-blue-500/20 bg-blue-500/10 text-blue-200/70' : 'cursor-pointer border-white/10 bg-white/4 text-white/70 hover:text-white hover:bg-white/8'} disabled:cursor-not-allowed disabled:opacity-50`}
           >
             <FlaskConical className="w-3.5 h-3.5" />
-            {simulationRunning ? 'Simulating…' : 'Run Safe Simulation'}
+            {simulationRunning || busyAction === 'simulate' ? 'Simulating…' : 'Run Safe Simulation'}
           </button>
         </div>
       </div>
@@ -209,27 +209,27 @@ export default function ReportStep({
         </div>
       )}
 
-      <div className={`flex-shrink-0 p-4 rounded-2xl border ${planningOnly ? 'bg-amber-500/6 border-amber-500/20' : 'bg-blue-500/5 border-blue-500/12'} space-y-2`}>
-        <div className="flex items-center justify-between gap-4">
-          <div>
+      <div className={`rounded-2xl border p-4 ${planningOnly ? 'border-amber-500/20 bg-amber-500/6' : 'border-blue-500/12 bg-blue-500/5'} space-y-3`}>
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
             <div className={`text-[10px] font-bold uppercase tracking-widest ${planningOnly ? 'text-amber-300/80' : 'text-blue-300/75'}`}>
               {planningStatusCopy}
             </div>
             <div className="text-xs text-white/65 leading-relaxed mt-1">
               {planningOnly
-                ? 'Imported or restored profiles are planning inputs only. Run a live hardware scan in this session before BIOS, build, or deployment actions.'
-                : 'This profile came from a live hardware scan in the current session and can be used for the guarded BIOS and deployment flow.'}
+                ? 'Imported and restored profiles are for planning only. Run a live scan before BIOS, build, or flash.'
+                : 'This profile came from a live scan in this session and can be used for BIOS, build, and flash checks.'}
             </div>
           </div>
           {profileArtifact && (
-            <div className="text-right text-[10px] text-white/40 font-mono">
+            <div className="text-[10px] text-white/40 font-mono lg:text-right">
               <div>{profileArtifact.digest.slice(0, 12)}</div>
               <div>{new Date(profileArtifact.capturedAt).toLocaleString()}</div>
             </div>
           )}
         </div>
         {planningOnly && (
-          <div className="flex items-center gap-3 pt-1">
+          <div className="flex flex-col gap-3 pt-1 sm:flex-row sm:items-center">
             <button
               onClick={() => void runAction('scan', onRunLiveScan)}
               disabled={busyAction !== null}
@@ -238,40 +238,27 @@ export default function ReportStep({
               {busyAction === 'scan' ? 'Scanning…' : 'Run Live Scan'}
             </button>
             <span className="text-[11px] text-amber-200/55">
-              Planning remains available, but destructive prerequisites stay locked until live scan state exists in main.
+              You can keep planning now. BIOS, build, and flash stay locked until a live scan is available.
             </span>
           </div>
         )}
       </div>
 
-      {/* Unified Compatibility Summary (Task 4) */}
-      <div className="flex-shrink-0">
-        <CompatibilitySummary report={report} />
-      </div>
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.3fr)_minmax(360px,0.9fr)]">
+        <div className="space-y-5">
+          <CompatibilitySummary report={report} />
 
-      <div className="flex-shrink-0">
-        <div className="text-[10px] text-white/35 font-bold uppercase tracking-widest mb-2">
-          Version Matrix
-        </div>
-        <CompatibilityMatrixView
-          rows={matrix.rows}
-          selectedVersion={profile.targetOS}
-        />
-      </div>
+          <div>
+            <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-white/35">
+              Version Matrix
+            </div>
+            <CompatibilityMatrixView
+              rows={matrix.rows}
+              selectedVersion={profile.targetOS}
+            />
+          </div>
 
-      <div className="flex-shrink-0">
-        <ResourcePlanPanel plan={resourcePlan} />
-      </div>
-
-      {simulationResult && (
-        <div className="flex-shrink-0">
-          <SimulationPreview result={simulationResult} report={report} />
-        </div>
-      )}
-
-      <div className="flex-1 overflow-y-auto custom-scrollbar space-y-5 pr-1">
-        {/* Hardware cards */}
-        <div className="grid grid-cols-2 gap-4">
+          <div className="grid gap-4 md:grid-cols-2">
           {/* CPU */}
           <motion.div
             initial={{ opacity: 0, y: 8 }}
@@ -365,70 +352,76 @@ export default function ReportStep({
               {parseInt(profile.ram) >= 8 ? 'Meets 8+ GB requirement' : 'Performance may be degraded'}
             </div>
           </motion.div>
+          </div>
+
+          {interpretation && interpretation.manualVerificationNeeded.length > 0 && (
+            <div className="space-y-2 rounded-2xl border border-blue-500/10 bg-blue-500/5 p-4">
+              <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-blue-400">
+                <Info className="w-3.5 h-3.5" /> Additional checks recommended
+              </div>
+              {interpretation.manualVerificationNeeded.map((item, i) => (
+                <div key={i} className="flex gap-2 text-xs text-blue-300/70">
+                  <span className="text-blue-400/40 mt-0.5">•</span>
+                  <span>{item}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {interpretation && (
+            <div className="overflow-hidden rounded-2xl border border-white/6">
+              <button
+                onClick={() => setShowInterpretation(!showInterpretation)}
+                className="flex w-full items-center justify-between bg-white/3 px-4 py-3 transition-colors hover:bg-white/5 cursor-pointer"
+              >
+                <span className="text-xs font-bold uppercase tracking-widest text-white/50">
+                  Detection details
+                </span>
+                {showInterpretation
+                  ? <ChevronDown className="w-4 h-4 text-white/30" />
+                  : <ChevronRight className="w-4 h-4 text-white/30" />
+                }
+              </button>
+              {showInterpretation && (
+                <div className="space-y-1 border-t border-white/5 px-4 py-3">
+                  <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-white/30">Processor</div>
+                  <FactRow fact={interpretation.cpu.vendor} />
+                  <FactRow fact={interpretation.cpu.architecture} />
+                  <FactRow fact={interpretation.cpu.generation} />
+                  <FactRow fact={interpretation.cpu.coreCount} />
+
+                  <div className="mb-2 mt-3 text-[10px] font-bold uppercase tracking-widest text-white/30">Graphics</div>
+                  <FactRow fact={interpretation.primaryGpu.vendor} />
+                  <FactRow fact={interpretation.primaryGpu.pciIds} />
+                  <FactRow fact={interpretation.primaryGpu.macosSupport} />
+
+                  <div className="mb-2 mt-3 text-[10px] font-bold uppercase tracking-widest text-white/30">Board</div>
+                  <FactRow fact={interpretation.board.vendor} />
+                  <FactRow fact={interpretation.board.model} />
+                  <FactRow fact={interpretation.board.formFactor} />
+
+                  <div className="mb-2 mt-3 text-[10px] font-bold uppercase tracking-widest text-white/30">System</div>
+                  <FactRow fact={interpretation.ram} />
+                  <FactRow fact={interpretation.vmDetected} />
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Manual verification needed */}
-        {interpretation && interpretation.manualVerificationNeeded.length > 0 && (
-          <div className="p-4 rounded-2xl bg-blue-500/5 border border-blue-500/10 space-y-2">
-            <div className="text-[10px] text-blue-400 font-bold uppercase tracking-widest flex items-center gap-1.5">
-              <Info className="w-3.5 h-3.5" /> Additional checks recommended
-            </div>
-            {interpretation.manualVerificationNeeded.map((item, i) => (
-              <div key={i} className="flex gap-2 text-xs text-blue-300/70">
-                <span className="text-blue-400/40 mt-0.5">•</span>
-                <span>{item}</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Expandable interpretation details */}
-        {interpretation && (
-          <div className="rounded-2xl border border-white/6 overflow-hidden">
-            <button
-              onClick={() => setShowInterpretation(!showInterpretation)}
-              className="w-full flex items-center justify-between px-4 py-3 bg-white/3 hover:bg-white/5 transition-colors cursor-pointer"
-            >
-              <span className="text-xs font-bold text-white/50 uppercase tracking-widest">
-                Detection details — how each value was determined
-              </span>
-              {showInterpretation
-                ? <ChevronDown className="w-4 h-4 text-white/30" />
-                : <ChevronRight className="w-4 h-4 text-white/30" />
-              }
-            </button>
-            {showInterpretation && (
-              <div className="px-4 py-3 space-y-1 border-t border-white/5">
-                <div className="text-[10px] text-white/30 font-bold uppercase tracking-widest mb-2">Processor</div>
-                <FactRow fact={interpretation.cpu.vendor} />
-                <FactRow fact={interpretation.cpu.architecture} />
-                <FactRow fact={interpretation.cpu.generation} />
-                <FactRow fact={interpretation.cpu.coreCount} />
-
-                <div className="text-[10px] text-white/30 font-bold uppercase tracking-widest mb-2 mt-3">Graphics</div>
-                <FactRow fact={interpretation.primaryGpu.vendor} />
-                <FactRow fact={interpretation.primaryGpu.pciIds} />
-                <FactRow fact={interpretation.primaryGpu.macosSupport} />
-
-                <div className="text-[10px] text-white/30 font-bold uppercase tracking-widest mb-2 mt-3">Board</div>
-                <FactRow fact={interpretation.board.vendor} />
-                <FactRow fact={interpretation.board.model} />
-                <FactRow fact={interpretation.board.formFactor} />
-
-                <div className="text-[10px] text-white/30 font-bold uppercase tracking-widest mb-2 mt-3">System</div>
-                <FactRow fact={interpretation.ram} />
-                <FactRow fact={interpretation.vmDetected} />
-              </div>
-            )}
-          </div>
-        )}
+        <div className="space-y-5">
+          <ResourcePlanPanel plan={resourcePlan} />
+          {simulationResult && (
+            <SimulationPreview result={simulationResult} report={report} />
+          )}
+        </div>
       </div>
 
       {/* Footer */}
-      <div className="flex-shrink-0 flex items-center justify-between pt-4 border-t border-white/5">
+      <div className="flex flex-col gap-3 border-t border-white/5 pt-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="text-xs text-[#555]">
           {planningOnly
-            ? <span className="text-amber-400/70">Live hardware scan required before guarded BIOS, build, or deployment actions.</span>
+            ? <span className="text-amber-400/70">Run a live scan before BIOS, build, or flash.</span>
             : report.errors.length > 0
             ? <span className="text-red-400/70">Blocking issues must be resolved first.</span>
             : report.warnings.length > 0

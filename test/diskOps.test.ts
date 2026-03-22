@@ -3,7 +3,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { buildLinuxFirstPartitionPath, buildWindowsFlashDiskpartScript, createDiskOps } from '../electron/diskOps.js';
+import {
+  buildLinuxFirstPartitionPath,
+  buildWindowsFlashDiskpartScript,
+  buildWindowsPhysicalDrivePath,
+  createDiskOps,
+  getWindowsFat32PartitionSizeMB,
+  isWindowsUsbLikeDisk,
+  shouldRetryWindowsFlashPreparation,
+} from '../electron/diskOps.js';
 
 // Null logger — we only care about violation output, not log calls
 const noop = () => {};
@@ -130,5 +138,59 @@ describe('diskOps platform helpers', () => {
     assert.match(script, /create partition primary noerr/);
     assert.match(script, /assign noerr/);
     assert.match(script, /rescan/);
+  });
+
+  test('buildWindowsFlashDiskpartScript supports an explicit FAT32-safe partition size', () => {
+    const script = buildWindowsFlashDiskpartScript('5', 30000);
+
+    assert.match(script, /create partition primary size=30000 noerr/);
+    assert.match(script, /format fs=fat32 quick label=OPENCORE noerr/);
+  });
+
+  test('getWindowsFat32PartitionSizeMB caps large USB drives to a FAT32-safe size', () => {
+    assert.equal(getWindowsFat32PartitionSizeMB(64_000_000_000), 30_000);
+    assert.equal(getWindowsFat32PartitionSizeMB(31_000_000_000), undefined);
+  });
+
+  test('buildWindowsPhysicalDrivePath normalizes legacy disk aliases', () => {
+    assert.equal(buildWindowsPhysicalDrivePath('2'), '\\\\.\\PhysicalDrive2');
+    assert.equal(buildWindowsPhysicalDrivePath('disk5'), '\\\\.\\PhysicalDrive5');
+    assert.equal(buildWindowsPhysicalDrivePath('\\\\.\\PhysicalDrive7'), '\\\\.\\PhysicalDrive7');
+  });
+
+  test('isWindowsUsbLikeDisk recognizes USB bridges beyond BusType USB', () => {
+    assert.equal(isWindowsUsbLikeDisk({ busType: 'USB' }), true);
+    assert.equal(isWindowsUsbLikeDisk({ busType: 'RAID', interfaceType: 'USB' }), true);
+    assert.equal(isWindowsUsbLikeDisk({ pnpDeviceId: 'USBSTOR\\DISK&VEN_GENERIC&PROD_FLASH_DISK' }), true);
+    assert.equal(isWindowsUsbLikeDisk({ mediaType: 'Removable Media' }), true);
+    assert.equal(isWindowsUsbLikeDisk({ busType: 'SATA', isBoot: false, isSystem: false }), false);
+    assert.equal(isWindowsUsbLikeDisk({ busType: 'USB', isSystem: true }), false);
+  });
+
+  test('shouldRetryWindowsFlashPreparation only retries the common diskpart lock path once', () => {
+    assert.equal(shouldRetryWindowsFlashPreparation({
+      attempt: 0,
+      maxAttempts: 2,
+      diskpartFailed: true,
+      driveLetter: '',
+    }), true);
+    assert.equal(shouldRetryWindowsFlashPreparation({
+      attempt: 1,
+      maxAttempts: 2,
+      diskpartFailed: true,
+      driveLetter: '',
+    }), false);
+    assert.equal(shouldRetryWindowsFlashPreparation({
+      attempt: 0,
+      maxAttempts: 2,
+      diskpartFailed: false,
+      driveLetter: '',
+    }), false);
+    assert.equal(shouldRetryWindowsFlashPreparation({
+      attempt: 0,
+      maxAttempts: 2,
+      diskpartFailed: true,
+      driveLetter: 'E',
+    }), false);
   });
 });

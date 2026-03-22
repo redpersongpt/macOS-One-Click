@@ -16,6 +16,7 @@ import { checkCompatibility } from './compatibility.js';
 import { buildCompatibilityMatrix } from './compatibilityMatrix.js';
 import { createEfiBackupManager, type EfiBackupPolicy } from './efiBackup.js';
 import { buildResourcePlan, type ResourcePlan } from './resourcePlanner.js';
+import { type KextRegistryEntry } from './kextSourcePolicy.js';
 import {
   createHardwareProfileArtifact,
   extractHardwareProfileInterpretationMetadata,
@@ -365,8 +366,10 @@ let lastBuildProfile: HardwareProfile | null = null;
 let lastHardwareInterpretation: HardwareInterpretation | null = null;
 let lastLiveHardwareProfileArtifact: HardwareProfileArtifact | null = null;
 let lastSelectedDisk: DiskInfo | null = null;
+type KextFetchSource = 'github' | 'embedded' | 'direct' | 'failed';
+
 let failedKexts: Array<{ name: string; repo: string; error: string }> = [];
-let kextSources: Record<string, 'github' | 'embedded' | 'failed'> = {};
+let kextSources: Record<string, KextFetchSource> = {};
 let lastValidationResult: ValidationResult | null = null;
 let lastFailureContext: ReleaseFailureContext | null = null;
 let lastFirmwareSummary: string | null = null;
@@ -1608,13 +1611,6 @@ function mapDetectedToProfile(hw: import('./hardwareDetect.js').DetectedHardware
 
 // --- GitHub Kext Fetcher ---
 
-interface KextRegistryEntry {
-  repo: string;
-  assetFilter?: string;
-  directUrl?: string;
-  staticVersion?: string;
-}
-
 const KEXT_REGISTRY: Record<string, KextRegistryEntry> = {
   'Lilu.kext':                          { repo: 'acidanthera/Lilu',                    assetFilter: 'RELEASE' },
   'VirtualSMC.kext':                    { repo: 'acidanthera/VirtualSMC',              assetFilter: 'RELEASE' },
@@ -1625,13 +1621,26 @@ const KEXT_REGISTRY: Record<string, KextRegistryEntry> = {
   'NootRX.kext':                        { repo: 'ChefKissInc/NootRX',                  directUrl: 'https://nightly.link/ChefKissInc/NootRX/workflows/main/master/Artifacts.zip', staticVersion: 'nightly' },
   'RTCMemoryFixup.kext':                { repo: 'acidanthera/RTCMemoryFixup',          assetFilter: 'RELEASE' },
   'VoodooPS2Controller.kext':           { repo: 'acidanthera/VoodooPS2',              assetFilter: 'RELEASE' },
-  'AMDRyzenCPUPowerManagement.kext':    { repo: 'trulyspinach/SMCAMDProcessor' },
-  'SMCAMDProcessor.kext':               { repo: 'trulyspinach/SMCAMDProcessor' },
+  'AMDRyzenCPUPowerManagement.kext':    { repo: 'trulyspinach/SMCAMDProcessor',        directUrl: 'https://github.com/trulyspinach/SMCAMDProcessor/releases/latest/download/AMDRyzenCPUPowerManagement.kext.zip', staticVersion: 'latest' },
+  'SMCAMDProcessor.kext':               { repo: 'trulyspinach/SMCAMDProcessor',        directUrl: 'https://github.com/trulyspinach/SMCAMDProcessor/releases/latest/download/SMCAMDProcessor.kext.zip', staticVersion: 'latest' },
   'AppleMCEReporterDisabler.kext':      { repo: 'acidanthera/bugtracker',              directUrl: 'https://github.com/acidanthera/bugtracker/files/3703498/AppleMCEReporterDisabler.kext.zip', staticVersion: 'bugtracker' },
   'RestrictEvents.kext':                { repo: 'acidanthera/RestrictEvents',          assetFilter: 'RELEASE' },
   'NVMeFix.kext':                       { repo: 'acidanthera/NVMeFix',                assetFilter: 'RELEASE' },
   'CPUTopologyRebuild.kext':            { repo: 'b00t0x/CpuTopologyRebuild',           assetFilter: 'RELEASE' },
 };
+
+for (const [kextName, entry] of Object.entries(KEXT_REGISTRY)) {
+  entry.embeddedFallback = hasEmbeddedKext(kextName);
+}
+
+function readValidatedInstalledKext(kextName: string, targetDir: string): { name: string; version: string } | null {
+  if (!validateInstalledKext(kextName, targetDir)) return null;
+  const versionFile = path.join(targetDir, kextName, '.version');
+  const version = fs.existsSync(versionFile)
+    ? fs.readFileSync(versionFile, 'utf-8').trim()
+    : 'installed';
+  return { name: kextName, version };
+}
 
 async function downloadToTemp(url: string, dest: string, timeoutMs = 120_000, checkAborted?: () => void): Promise<void> {
   return retryWithBackoff(
@@ -2300,21 +2309,29 @@ async function validateFlashPreWriteContext(input: {
   };
 }
 
-async function fetchKextFromGitHub(kextName: string, targetDir: string, checkAborted?: () => void): Promise<{ name: string; version: string }> {
+async function fetchKextFromGitHub(
+  kextName: string,
+  targetDir: string,
+  releaseCache?: Map<string, Promise<{ version: string; assetUrl: string | null; assetName: string | null }>>,
+  checkAborted?: () => void,
+): Promise<{ name: string; version: string }> {
   const entry = KEXT_REGISTRY[kextName];
   if (!entry) return { name: kextName, version: 'bundled' };
 
   const proxy = parseProxy();
 
-  async function queryGitHubRelease(): Promise<{ version: string; assetUrl: string | null; assetName: string | null }> {
+  function loadGitHubRelease(): Promise<{ version: string; assetUrl: string | null; assetName: string | null }> {
     if (entry.directUrl) {
-      return {
+      return Promise.resolve({
         version: entry.staticVersion ?? 'direct',
         assetUrl: entry.directUrl,
         assetName: path.basename(new URL(entry.directUrl).pathname) || null,
-      };
+      });
     }
-    return new Promise((resolve, reject) => {
+    const cached = releaseCache?.get(entry.repo);
+    if (cached) return cached;
+
+    const request = new Promise<{ version: string; assetUrl: string | null; assetName: string | null }>((resolve, reject) => {
       const reqOptions: any = {
         hostname: 'api.github.com',
         port: 443,
@@ -2367,10 +2384,16 @@ async function fetchKextFromGitHub(kextName: string, targetDir: string, checkAbo
         sock.on('error', reject);
       } else { doQuery(); }
     });
+    const cachedRequest = request.catch((error) => {
+      releaseCache?.delete(entry.repo);
+      throw error;
+    });
+    releaseCache?.set(entry.repo, cachedRequest);
+    return cachedRequest;
   }
 
   try {
-    const { version, assetUrl } = await retryWithBackoff(queryGitHubRelease, 3, `github-api(${kextName})`, checkAborted);
+    const { version, assetUrl } = await retryWithBackoff(loadGitHubRelease, 3, `github-api(${kextName})`, checkAborted);
     const dest = path.join(targetDir, kextName);
     const versionFile = path.join(dest, '.version');
     const manifestFile = path.join(dest, 'manifest.json');
@@ -2387,11 +2410,12 @@ async function fetchKextFromGitHub(kextName: string, targetDir: string, checkAbo
     }
 
     if (!assetUrl) {
-      const kextDir = path.join(targetDir, kextName);
-      if (!fs.existsSync(kextDir)) fs.mkdirSync(kextDir, { recursive: true });
-      fs.writeFileSync(path.join(kextDir, '.version'), version);
-      generateFolderManifest(kextDir, path.join(kextDir, 'manifest.json'));
-      return { name: kextName, version };
+      const installed = readValidatedInstalledKext(kextName, targetDir);
+      if (installed) {
+        log('WARN', 'kext', `Release metadata for ${kextName} had no matching archive; reusing validated installed copy`, { version: installed.version });
+        return installed;
+      }
+      throw new Error(`No matching archive asset found for ${kextName}`);
     }
 
     const tmpZip = path.join(os.tmpdir(), `oc_${kextName.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}.zip`);
@@ -2426,10 +2450,12 @@ async function fetchKextFromGitHub(kextName: string, targetDir: string, checkAbo
           log('WARN', 'kext', `Atomic rename failed, used copy fallback`, { kextName });
         }
       } else {
-        log('WARN', 'kext', `Could not find ${kextName} in extracted archive — writing stub`, { tmpExtract });
-        if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
-        fs.writeFileSync(path.join(dest, '.version'), version);
-        generateFolderManifest(dest, path.join(dest, 'manifest.json'));
+        const installed = readValidatedInstalledKext(kextName, targetDir);
+        if (installed) {
+          log('WARN', 'kext', `Archive for ${kextName} did not contain the expected bundle; reusing validated installed copy`, { version: installed.version });
+          return installed;
+        }
+        throw new Error(`Downloaded archive did not contain ${kextName}`);
       }
     } finally {
       try { if (fs.existsSync(tmpZip)) fs.unlinkSync(tmpZip); } catch (_) {}
@@ -2438,11 +2464,8 @@ async function fetchKextFromGitHub(kextName: string, targetDir: string, checkAbo
     return { name: kextName, version };
   } catch (err) {
     const msg = classifyError(err);
-    log('ERROR', 'kext', `Failed to fetch ${kextName} — using offline stub`, { error: msg });
-    const kextDir = path.join(targetDir, kextName);
-    if (!fs.existsSync(kextDir)) fs.mkdirSync(kextDir, { recursive: true });
-    fs.writeFileSync(path.join(kextDir, '.version'), 'offline');
-    return { name: kextName, version: 'offline' };
+    log('ERROR', 'kext', `Failed to fetch ${kextName}`, { error: msg });
+    throw new Error(`Failed to fetch ${kextName}: ${msg}`);
   }
 }
 
@@ -2864,6 +2887,11 @@ app.whenReady().then(async () => {
     try { if (fs.existsSync(lockFile)) fs.unlinkSync(lockFile); } catch {}
   });
   hardwareProfileStore = createHardwareProfileStore(app.getPath('userData'));
+  const latestHardwareArtifact = hardwareProfileStore.loadLatest();
+  if (latestHardwareArtifact && canRestoreLatestScannedArtifact(latestHardwareArtifact)) {
+    lastScannedProfile = latestHardwareArtifact.profile;
+    lastLiveHardwareProfileArtifact = latestHardwareArtifact;
+  }
   efiBackupManager = createEfiBackupManager(app.getPath('userData'));
   flashConfirmationStore = createFlashConfirmationStore(() => Date.now(), logger.sessionId);
   logFlashAuthorizationEvent('INFO', 'Flash authorization session started', {
@@ -3231,40 +3259,52 @@ app.whenReady().then(async () => {
     );
   });
 
-  // Kext fetcher — hybrid: GitHub (latest) → embedded fallback → hard fail
+  // Kext fetcher — primary network source (GitHub release or direct asset) → embedded fallback → hard fail
   ipcHandle('fetch-latest-kexts', async (_event: Electron.IpcMainInvokeEvent, efiPath: string, kextNames: string[]) => {
     const kextsDir = path.resolve(efiPath, 'EFI/OC/Kexts');
     if (!fs.existsSync(kextsDir)) fs.mkdirSync(kextsDir, { recursive: true });
     const token = registry.create('kext-fetch');
     log('INFO', 'kext', 'Starting hybrid kext fetch', { count: kextNames.length, taskId: token.taskId });
 
-    const results: { name: string; version: string; source: 'github' | 'embedded' | 'failed' }[] = [];
+    const results: { name: string; version: string; source: KextFetchSource }[] = [];
     failedKexts = [];
     kextSources = {};
+    const releaseCache = new Map<string, Promise<{ version: string; assetUrl: string | null; assetName: string | null }>>();
 
     try {
       for (const kextName of kextNames) {
         token.check();
         let result: { name: string; version: string } | null = null;
-        let source: 'github' | 'embedded' | 'failed' = 'failed';
+        let source: KextFetchSource = 'failed';
         let githubFailureReason: string | null = null;
         let embeddedFailureReason: string | null = null;
+        const entry = KEXT_REGISTRY[kextName];
+        const primarySource: KextFetchSource = entry?.directUrl ? 'direct' : 'github';
 
-        // Layer 1: Try GitHub (latest version)
+        // Layer 1: Try the primary network source (GitHub release or direct asset)
         try {
-          result = await fetchKextFromGitHub(kextName, kextsDir, () => token.check());
+          result = await fetchKextFromGitHub(kextName, kextsDir, releaseCache, () => token.check());
           // Validate the GitHub result landed correctly
-          if (result.version !== 'offline' && validateInstalledKext(kextName, kextsDir)) {
-            source = 'github';
-            log('INFO', 'kext', `${kextName} — GitHub OK`, { version: result.version });
+          if (result.version !== 'unavailable' && validateInstalledKext(kextName, kextsDir)) {
+            source = primarySource;
+            log('INFO', 'kext', `${kextName} — ${primarySource} OK`, { version: result.version });
           } else {
-            log('WARN', 'kext', `${kextName} — GitHub download incomplete, trying embedded`, { version: result?.version });
+            log('WARN', 'kext', `${kextName} — ${primarySource} download incomplete, trying embedded`, { version: result?.version });
             result = null; // force fallback
           }
         } catch (err: any) {
           githubFailureReason = err?.message ?? String(err);
-          log('WARN', 'kext', `${kextName} — GitHub failed: ${err.message}, trying embedded`);
+          log('WARN', 'kext', `${kextName} — ${primarySource} failed: ${err.message}, trying embedded`);
           result = null;
+        }
+
+        if (!result) {
+          const installed = readValidatedInstalledKext(kextName, kextsDir);
+          if (installed) {
+            result = installed;
+            source = primarySource;
+            log('WARN', 'kext', `${kextName} — reusing validated local copy after ${primarySource} failure`, { version: installed.version });
+          }
         }
 
         // Layer 2: Fallback to embedded kext
@@ -3290,7 +3330,6 @@ app.whenReady().then(async () => {
 
         // Hard fail — neither source worked
         if (!result) {
-          const entry = KEXT_REGISTRY[kextName];
           const failureParts = [githubFailureReason, embeddedFailureReason]
             .filter((value): value is string => Boolean(value))
             .map((value) => value.trim());
@@ -3299,7 +3338,7 @@ app.whenReady().then(async () => {
             repo: entry?.repo || 'unknown',
             error: failureParts.length > 0 ? failureParts.join(' | ') : 'Both GitHub and embedded fallback failed',
           });
-          result = { name: kextName, version: 'offline' };
+          result = { name: kextName, version: 'unavailable' };
           source = 'failed';
           log('ERROR', 'kext', `${kextName} — HARD FAIL: no source available`);
         }

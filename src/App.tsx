@@ -103,7 +103,10 @@ import type { SafeSimulationResult } from '../electron/safeSimulation';
 import type { PublicDiagnosticsSnapshot } from '../electron/releaseDiagnostics';
 import UpdaterPanel from './components/UpdaterPanel';
 import { resolveScanSuccessStep, type ScanSuccessStep } from './lib/scanFlow';
-type KextFetchResult = { name: string; version: string; source?: 'github' | 'embedded' | 'failed' };
+import { getSidebarStatus } from './lib/sidebarState.js';
+import { buildResourcePlanOwnerKey, resolveVisibleResourcePlan } from './lib/resourcePlanState.js';
+import { APP_UPDATE_REFRESH_INTERVAL_MS, shouldRefreshAppUpdateState } from './lib/updateState.js';
+type KextFetchResult = { name: string; version: string; source?: 'github' | 'embedded' | 'direct' | 'failed' };
 
 declare global {
   interface Window {
@@ -301,10 +304,10 @@ export default function App() {
   const [communityIssues, setCommunityIssues] = useState<CommunityIssue[]>([]);
   const [showEfiReport, setShowEfiReport] = useState(false);
 
-  const buildKextSourceMap = (results: KextFetchResult[] = kextResults): Record<string, 'github' | 'embedded' | 'failed'> =>
+  const buildKextSourceMap = (results: KextFetchResult[] = kextResults): Record<string, 'github' | 'embedded' | 'direct' | 'failed'> =>
     Object.fromEntries(
       results
-        .filter((result): result is KextFetchResult & { source: 'github' | 'embedded' | 'failed' } => !!result.source)
+        .filter((result): result is KextFetchResult & { source: 'github' | 'embedded' | 'direct' | 'failed' } => !!result.source)
         .map(result => [result.name, result.source]),
     );
 
@@ -352,12 +355,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!appUpdateState?.checking && !appUpdateState?.downloading && !appUpdateState?.installing) return;
+    if (!shouldRefreshAppUpdateState(appUpdateState)) return;
     const interval = setInterval(() => {
       void refreshAppUpdateState();
-    }, 800);
+    }, APP_UPDATE_REFRESH_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [appUpdateState?.checking, appUpdateState?.downloading, appUpdateState?.installing]);
+  }, [appUpdateState]);
 
   // ── Suggestion Engine State ──────────────────────────────────
   const [lastSuggestion, setLastSuggestion] = useState<{ code: string; category: string; title: string } | null>(null);
@@ -387,6 +390,8 @@ export default function App() {
   const biosAcceptedRef = useRef(false);
   const biosRefreshRequestIdRef = useRef(0);
   const buildAutoStartRef = useRef(false);
+  const lastStableResourcePlanRef = useRef<ResourcePlan | null>(null);
+  const lastStableResourcePlanOwnerRef = useRef<string | null>(null);
 
   // ── Debug Overlay ──────────────────────────────────────────────
   const [debugOpen, setDebugOpen] = useState(false);
@@ -422,6 +427,19 @@ export default function App() {
   const compatibilityMatrix = useMemo(
     () => (profile ? buildCompatibilityMatrix(profile) : null),
     [profile],
+  );
+  const resourcePlanOwnerKey = useMemo(
+    () => buildResourcePlanOwnerKey(profile),
+    [profile],
+  );
+  const visibleResourcePlan = useMemo(
+    () => resolveVisibleResourcePlan(
+      resourcePlan,
+      resourcePlanOwnerKey,
+      lastStableResourcePlanRef.current,
+      lastStableResourcePlanOwnerRef.current,
+    ),
+    [resourcePlan, resourcePlanOwnerKey],
   );
   const localBuildGuard = useMemo(
     () => evaluateBuildGuard({
@@ -753,7 +771,7 @@ export default function App() {
     overrideStep?: string,
     options?: {
       validationResult?: ValidationResult | null;
-      kextSources?: Record<string, 'github' | 'embedded' | 'failed'>;
+      kextSources?: Record<string, 'github' | 'embedded' | 'direct' | 'failed'>;
     },
   ) => {
     setGlobalNotice(null);
@@ -1137,13 +1155,20 @@ export default function App() {
   useEffect(() => {
     if (!profile) {
       setResourcePlan(null);
+      lastStableResourcePlanRef.current = null;
+      lastStableResourcePlanOwnerRef.current = null;
       return;
     }
 
     let cancelled = false;
+    setResourcePlan(null);
     window.electron.getResourcePlan(profile, efiPath)
       .then((plan) => {
-        if (!cancelled) setResourcePlan(plan);
+        if (!cancelled) {
+          setResourcePlan(plan);
+          lastStableResourcePlanRef.current = plan;
+          lastStableResourcePlanOwnerRef.current = resourcePlanOwnerKey;
+        }
       })
       .catch(() => {
         if (!cancelled) setResourcePlan(null);
@@ -1152,7 +1177,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [profile, efiPath]);
+  }, [efiPath, kextResults, profile, resourcePlanOwnerKey, validationResult?.checkedAt]);
 
   useEffect(() => {
     selectedUsbRef.current = selectedUsb;
@@ -1407,12 +1432,6 @@ export default function App() {
 
     return () => window.clearInterval(interval);
   }, []);
-
-  const getStatus = (id: string): 'active' | 'complete' | 'pending' => {
-    if (id === step || (id === 'scanning' && step === 'version-select')) return 'active';
-    const ci = STEP_ORDER.indexOf(step), si = STEP_ORDER.indexOf(id as StepId);
-    return si < ci ? 'complete' : 'pending';
-  };
 
   // Persist state
   useEffect(() => { (async () => { try {
@@ -1991,12 +2010,12 @@ export default function App() {
         fetchedKextResults = await window.electron.fetchLatestKexts(built, kexts);
         if (!isCurrentRun()) return;
         setKextResults(fetchedKextResults);
-        for (const k of fetchedKextResults.filter(k => k.version === 'offline')) {
+        for (const k of fetchedKextResults.filter(k => k.source === 'failed')) {
           (window.electron as any).recordFailure(`kext_${k.name}`, 'Download failed').catch(() => {});
         }
       } catch (e) {
         if (!isCurrentRun()) return;
-        fetchedKextResults = kexts.map(k => ({ name: k, version: 'offline', source: 'failed' }));
+        fetchedKextResults = kexts.map(k => ({ name: k, version: 'unavailable', source: 'failed' }));
         setKextResults(fetchedKextResults);
         (window.electron as any).recordFailure('kext_batch', String((e as Error)?.message || 'Batch kext fetch failed')).catch(() => {});
       }
@@ -2710,7 +2729,7 @@ export default function App() {
   // ── Sidebar helper ──────────────────────────────────────────
 
   const SidebarItem = ({ id, label, icon: Icon }: { id: string; label: string; icon: any }) => {
-    const s = getStatus(id);
+    const s = getSidebarStatus(step, id, STEP_ORDER);
     return (
       <div className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${s === 'active' ? 'bg-white/10 text-white' : s === 'complete' ? 'text-white/60' : 'text-[#555]'}`}>
         <div className={`w-6 h-6 rounded-md flex items-center justify-center text-xs ${s === 'complete' ? 'bg-green-500/20 text-green-400' : s === 'active' ? (Icon === BrandIcon ? 'bg-white/10 text-white' : 'bg-blue-500/20 text-blue-400') : 'bg-white/5 text-[#444]'}`}>
@@ -2731,10 +2750,18 @@ export default function App() {
     { label: 'Start downloads', sublabel: 'Starting kext and recovery setup', done: progress >= 100, active: progress >= 92 && progress < 100 },
   ];
   const kextStages = kextResults.map((k: any) => {
-    const src = k.source === 'embedded' ? 'embedded fallback' : k.source === 'failed' ? 'FAILED' : 'GitHub';
+    const src = k.source === 'embedded'
+      ? 'bundled fallback'
+      : k.source === 'direct'
+      ? 'direct download'
+      : k.source === 'failed'
+      ? 'FAILED'
+      : 'GitHub';
     return {
       label: k.name,
-      sublabel: k.version === 'offline' ? `FAILED — no source available` : `v${k.version} — ${src}`,
+      sublabel: k.source === 'failed'
+        ? 'FAILED — download and bundled fallback unavailable'
+        : `v${k.version} — ${src}`,
       done: true, active: false,
     };
   });
@@ -2765,26 +2792,35 @@ export default function App() {
       <div className="bg-grain" />
       {/* Background glows */}
       <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden">
-        <motion.div 
-          animate={{ 
-            scale: [1, 1.2, 1], 
-            translateX: ['-10%', '10%', '-10%'],
-            translateY: ['-10%', '5%', '-10%'],
-            opacity: [0.15, 0.25, 0.15] 
-          }} 
-          transition={{ duration: 25, repeat: Infinity, ease: "linear" }} 
-          className="absolute top-[-30%] left-[-20%] w-[100%] h-[100%] bg-blue-600/40 rounded-full blur-[200px]" 
-        />
-        <motion.div 
-          animate={{ 
-            scale: [1, 1.3, 1], 
-            translateX: ['10%', '-10%', '10%'],
-            translateY: ['10%', '-5%', '10%'],
-            opacity: [0.1, 0.2, 0.1] 
-          }} 
-          transition={{ duration: 30, repeat: Infinity, ease: "linear", delay: 2 }} 
-          className="absolute bottom-[-30%] right-[-20%] w-[90%] h-[90%] bg-purple-600/30 rounded-full blur-[200px]" 
-        />
+        {step === 'landing' ? (
+          <>
+            <motion.div 
+              animate={{ 
+                scale: [1, 1.2, 1], 
+                translateX: ['-10%', '10%', '-10%'],
+                translateY: ['-10%', '5%', '-10%'],
+                opacity: [0.15, 0.25, 0.15] 
+              }} 
+              transition={{ duration: 25, repeat: Infinity, ease: "linear" }} 
+              className="absolute top-[-30%] left-[-20%] w-[100%] h-[100%] bg-blue-600/40 rounded-full blur-[200px]" 
+            />
+            <motion.div 
+              animate={{ 
+                scale: [1, 1.3, 1], 
+                translateX: ['10%', '-10%', '10%'],
+                translateY: ['10%', '-5%', '10%'],
+                opacity: [0.1, 0.2, 0.1] 
+              }} 
+              transition={{ duration: 30, repeat: Infinity, ease: "linear", delay: 2 }} 
+              className="absolute bottom-[-30%] right-[-20%] w-[90%] h-[90%] bg-purple-600/30 rounded-full blur-[200px]" 
+            />
+          </>
+        ) : (
+          <>
+            <div className="absolute top-[-28%] left-[-18%] h-[95%] w-[95%] rounded-full bg-blue-600/22 blur-[200px]" />
+            <div className="absolute bottom-[-28%] right-[-18%] h-[82%] w-[82%] rounded-full bg-purple-600/16 blur-[200px]" />
+          </>
+        )}
       </div>
 
       <AnimatePresence mode="wait">
@@ -2884,7 +2920,7 @@ export default function App() {
         {/* ── WIZARD SHELL ── */}
         {step !== 'landing' && (
           <motion.div key="shell" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-            className="z-10 flex h-[min(660px,calc(100vh-2rem))] w-full max-w-5xl glass-card overflow-hidden">
+            className="z-10 flex h-[min(820px,calc(100vh-2rem))] w-full max-w-[min(1560px,calc(100vw-2rem))] glass-card overflow-hidden">
 
             {/* Sidebar */}
             <div className="w-64 border-r border-white/5 bg-black/20 flex flex-col p-6 gap-1 flex-shrink-0">
@@ -3015,7 +3051,7 @@ export default function App() {
 
             {/* Content */}
             <div className="flex-1 min-h-0 flex flex-col relative">
-              <div className="relative flex-shrink-0 px-10 pt-8 pb-4">
+              <div className="relative flex-shrink-0 px-6 pt-8 pb-4 sm:px-8 xl:px-12">
                 <div className="absolute top-4 right-8 opacity-10 pointer-events-none flex items-center gap-2">
                   <BrandIcon className="w-4 h-4 text-white" />
                   <span className="text-[10px] font-bold uppercase tracking-widest">macOS OneClick</span>
@@ -3045,7 +3081,7 @@ export default function App() {
                   );
                 })()}
               </div>
-              <div className="flex-1 overflow-y-auto custom-scrollbar px-10 pb-10 relative">
+              <div className="relative flex-1 overflow-y-auto custom-scrollbar px-6 pb-10 sm:px-8 xl:px-12">
               <AnimatePresence mode="wait">
 
                 {/* WELCOME */}
@@ -3117,7 +3153,7 @@ export default function App() {
                       matrix={compatibilityMatrix ?? buildCompatibilityMatrix(profile)}
                       interpretation={hwInterpretation}
                       profileArtifact={profileArtifact}
-                      resourcePlan={resourcePlan}
+                      resourcePlan={visibleResourcePlan}
                       planningOnly={!hasLiveHardwareContext}
                       planningProfileContext={planningProfileContext}
                       simulationResult={safeSimulationResult}
@@ -3180,7 +3216,7 @@ export default function App() {
                 {/* KEXT FETCH */}
                 {step === 'kext-fetch' && (
                   <motion.div key="kext" initial={stepEnter} animate={stepActive} exit={stepExit} transition={STEP_TRANSITION} className="h-full">
-                    <ProgressStep title="Downloading Kexts" subtitle="Fetching the latest stable versions from GitHub." icon={Package} progress={progress} statusText={kextResults.length ? `${kextResults.length} downloaded` : 'Querying GitHub releases…'} notice={step === 'kext-fetch' ? buildProgressNotice : null} stages={kextStages.length ? kextStages : [{ label: 'Connecting to GitHub…', sublabel: '', done: false, active: true }]} />
+                    <ProgressStep title="Downloading Kexts" subtitle="Downloading required kexts and validating bundled fallbacks." icon={Package} progress={progress} statusText={kextResults.length ? `${kextResults.length} ready` : 'Checking download sources…'} notice={step === 'kext-fetch' ? buildProgressNotice : null} stages={kextStages.length ? kextStages : [{ label: 'Checking download sources…', sublabel: '', done: false, active: true }]} />
                   </motion.div>
                 )}
 

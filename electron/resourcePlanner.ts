@@ -1,5 +1,6 @@
 import { getRequiredResources, type HardwareProfile } from './configGenerator.js';
 import type { ValidationResult } from './configValidator.js';
+import type { KextRegistryEntry } from './kextSourcePolicy.js';
 
 export type ResourcePlanKind = 'kext' | 'ssdt' | 'driver' | 'payload';
 export type ResourcePlanSourceClass = 'bundled' | 'generated' | 'downloaded' | 'manual';
@@ -35,8 +36,8 @@ function findValidationOutcome(
 export function buildResourcePlan(input: {
   profile: HardwareProfile;
   validationResult?: ValidationResult | null;
-  kextRegistry: Record<string, { repo: string; assetFilter?: string }>;
-  kextSources?: Record<string, 'github' | 'embedded' | 'failed'>;
+  kextRegistry: Record<string, KextRegistryEntry>;
+  kextSources?: Record<string, 'github' | 'embedded' | 'direct' | 'failed'>;
 }): ResourcePlan {
   const { kexts, ssdts } = getRequiredResources(input.profile);
   const resources: ResourcePlanEntry[] = [];
@@ -46,7 +47,7 @@ export function buildResourcePlan(input: {
     const fetchedSource = input.kextSources?.[kext];
     const sourceClass: ResourcePlanSourceClass = fetchedSource === 'embedded'
       ? 'bundled'
-      : fetchedSource === 'github'
+      : fetchedSource === 'github' || fetchedSource === 'direct'
       ? 'downloaded'
       : registryEntry
       ? 'downloaded'
@@ -58,8 +59,14 @@ export function buildResourcePlan(input: {
     resources.push({
       name: kext,
       kind: 'kext',
-      source: registryEntry ? `https://github.com/${registryEntry.repo}/releases/latest` : 'Bundled application asset',
-      expectedIdentityOrVersion: registryEntry?.assetFilter
+      source: registryEntry?.directUrl
+        ? registryEntry.directUrl
+        : registryEntry
+        ? `https://github.com/${registryEntry.repo}/releases/latest`
+        : 'Bundled application asset',
+      expectedIdentityOrVersion: registryEntry?.directUrl
+        ? (registryEntry.staticVersion ? `Direct asset (${registryEntry.staticVersion})` : 'Direct asset download')
+        : registryEntry?.assetFilter
         ? `${registryEntry.repo} (${registryEntry.assetFilter})`
         : registryEntry?.repo ?? 'Bundled local asset',
       validationOutcome,

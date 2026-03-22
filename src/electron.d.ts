@@ -22,7 +22,7 @@ declare global {
       importHardwareProfile: () => Promise<import('../electron/hardwareProfileArtifact').HardwareProfileArtifact | null>;
       inspectEfiBackupPolicy: (device: string) => Promise<import('../electron/efiBackup').EfiBackupPolicy>;
       buildEFI: (profile: any, allowAcceptedSession?: boolean) => Promise<string>;
-      fetchLatestKexts: (efiPath: string, kextNames: string[]) => Promise<Array<{ name: string; version: string; source?: 'github' | 'embedded' | 'failed' }>>;
+      fetchLatestKexts: (efiPath: string, kextNames: string[]) => Promise<Array<{ name: string; version: string; source?: 'github' | 'embedded' | 'direct' | 'failed' }>>;
       downloadRecovery: (targetPath: string, macOSVersion: string, startOffset?: number) => Promise<{ dmgPath: string; recoveryDir: string }>;
       listUsbDevices: () => Promise<Array<{ name: string; device: string; size: string }>>;
       prepareFlashConfirmation: (device: string, efiPath: string, expectedIdentity?: { devicePath?: string; sizeBytes?: number; model?: string; vendor?: string; serialNumber?: string; transport?: string; removable?: boolean; partitionTable?: string }) => Promise<{ token: string; expiresAt: number; diskInfo: any; backupPolicy: import('../electron/efiBackup').EfiBackupPolicy }>;

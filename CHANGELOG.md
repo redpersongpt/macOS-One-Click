@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.4.4 - 2026-03-22
+
+### Windows disk and flash fixes (#9, #11)
+- Fixed Windows disk identity so `PhysicalDriveN` paths are canonical end-to-end instead of mixing `diskN` aliases that broke partition-table and system-disk checks.
+- Widened USB detection beyond `BusType=USB` to catch bridge-backed removable media through `InterfaceType`, `PNPDeviceID`, and `MediaType`.
+- Separated partition-table errors from system-disk errors so users see the right remediation instead of a generic safety block.
+- Capped FAT32 partition size on drives larger than 32 GB so `diskpart` prep does not exceed the FAT32 volume limit.
+- Added a diskpart retry path for the common Windows lock/mount-handle failure.
+- Restored flash authorization from saved scan artifacts on app restart so a valid session survives relaunch.
+
+### Kext delivery, resource plan, and UI fixes (#10)
+- Kext resolution now routes explicitly to bundled, GitHub, direct download, embedded fallback, or hard fail — no more fake offline stubs.
+- Added direct-download paths for AMD kexts and other non-API-friendly sources.
+- Resource plan persists across Build EFI re-entry when the hardware profile has not changed.
+- Sidebar highlights exactly one active step instead of allowing duplicates.
+- Updater polling runs only during active check/download/install states.
+- Shortened recommendation, compatibility, and report copy.
+
 ## 2.3.8 - 2026-03-21
 
 - Fixed USB flash-prep disk identity loss on Windows so valid removable targets keep a stable identity from selection through flash confirmation.

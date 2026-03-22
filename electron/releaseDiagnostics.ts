@@ -52,7 +52,7 @@ export interface PublicDiagnosticsSnapshot {
     errors: string[];
   } | null;
   failedKexts: string[];
-  kextSources: Record<string, 'github' | 'embedded' | 'failed'>;
+  kextSources: Record<string, 'github' | 'embedded' | 'direct' | 'failed'>;
   diskContext: {
     selectedDevice: string | null;
     partitionTable: DiskInfo['partitionTable'] | null;
@@ -115,7 +115,7 @@ export interface CreateDiagnosticsSnapshotInput {
   lastTaskStatus: string | null;
   lastError: string | null;
   failedKexts: string[];
-  kextSources: Record<string, 'github' | 'embedded' | 'failed'>;
+  kextSources: Record<string, 'github' | 'embedded' | 'direct' | 'failed'>;
   selectedDisk: DiskInfo | null;
   diskIdentity: DiskIdentityFingerprint | null;
   compatibilityReport: CompatibilityReport | null;

@@ -9,6 +9,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { queryAppleRecoveryAssets } from './appleRecovery.js';
+import {
+  resolveKextSourcePlan,
+  type KextRegistryEntry,
+} from './kextSourcePolicy.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -63,13 +67,6 @@ export interface StateVerification {
   configPlistValid: boolean;
   kextsFolderPopulated: boolean;
   missingKexts: string[];
-}
-
-// ─── Kext Registry (needed for URL resolution) ──────────────────────────────
-
-interface KextRegistryEntry {
-  repo: string;
-  assetFilter?: string;
 }
 
 // ─── HTTP Verification Helpers ──────────────────────────────────────────────
@@ -205,6 +202,26 @@ export async function simulateBuild(
         };
       }
 
+      if (entry.directUrl) {
+        const directCheck = await verifyUrl(entry.directUrl);
+        const resolution = resolveKextSourcePlan(kextName, entry, null, {
+          directUrlReachable: directCheck.reachable,
+          directUrlError: directCheck.error || (directCheck.httpCode ? `HTTP ${directCheck.httpCode}` : null),
+        });
+
+        return {
+          name: kextName,
+          type: 'kext' as const,
+          verified: resolution.available,
+          certainty: resolution.available ? 'will_succeed' as Certainty : 'will_fail' as Certainty,
+          detail: resolution.available
+            ? `${resolution.version ?? 'direct'} direct download verified`
+            : resolution.message,
+          url: entry.directUrl,
+          actualSize: directCheck.contentLength,
+        };
+      }
+
       // Check if we already queried this repo
       let releaseInfo = checkedRepos.get(entry.repo);
       if (!releaseInfo) {
@@ -212,39 +229,51 @@ export async function simulateBuild(
         checkedRepos.set(entry.repo, releaseInfo);
       }
 
-      if (releaseInfo.error) {
+      const releaseResolution = resolveKextSourcePlan(kextName, entry, releaseInfo);
+
+      if (releaseResolution.route === 'embedded') {
         return {
           name: kextName,
           type: 'kext' as const,
-          verified: false,
-          certainty: 'will_fail' as Certainty,
-          detail: `GitHub API error: ${releaseInfo.error}`,
+          verified: true,
+          certainty: 'will_succeed' as Certainty,
+          detail: releaseResolution.message,
           url: `https://github.com/${entry.repo}/releases/latest`,
         };
       }
 
-      if (!releaseInfo.assetUrl) {
+      if (!releaseResolution.available || !releaseResolution.assetUrl) {
         return {
           name: kextName,
           type: 'kext' as const,
           verified: false,
           certainty: 'will_fail' as Certainty,
-          detail: `No matching .zip asset in ${entry.repo} release ${releaseInfo.version}`,
+          detail: releaseResolution.message,
           url: `https://github.com/${entry.repo}/releases/latest`,
         };
       }
 
       // Verify the actual download URL resolves
-      const assetCheck = await verifyUrl(releaseInfo.assetUrl);
+      const assetCheck = await verifyUrl(releaseResolution.assetUrl);
+      if (!assetCheck.reachable && entry.embeddedFallback) {
+        return {
+          name: kextName,
+          type: 'kext' as const,
+          verified: true,
+          certainty: 'will_succeed' as Certainty,
+          detail: `${kextName} asset URL failed, but a bundled fallback is ready.`,
+          url: `https://github.com/${entry.repo}/releases/latest`,
+        };
+      }
       return {
         name: kextName,
         type: 'kext' as const,
         verified: assetCheck.reachable,
         certainty: assetCheck.reachable ? 'will_succeed' : 'may_fail' as Certainty,
         detail: assetCheck.reachable
-          ? `${releaseInfo.version} verified (${Math.round(assetCheck.contentLength / 1024)} KB)`
+          ? `${releaseResolution.version ?? 'unknown'} verified (${Math.round(assetCheck.contentLength / 1024)} KB)`
           : `Asset URL failed: ${assetCheck.error || `HTTP ${assetCheck.httpCode}`}`,
-        url: releaseInfo.assetUrl,
+        url: releaseResolution.assetUrl,
         actualSize: assetCheck.contentLength,
       };
     }));

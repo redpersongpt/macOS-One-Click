@@ -107,6 +107,28 @@ describe('resource planner', () => {
     assert.equal(ssdt?.validationOutcome, 'warning');
   });
 
+  test('preserves direct-download provenance for kexts that bypass the GitHub API', () => {
+    const plan = buildResourcePlan({
+      profile: makeProfile(),
+      kextRegistry: {
+        'Lilu.kext': {
+          repo: 'acidanthera/Lilu',
+          directUrl: 'https://example.com/Lilu.kext.zip',
+          staticVersion: 'direct',
+        },
+      },
+      kextSources: {
+        'Lilu.kext': 'direct',
+      },
+    });
+
+    const lilu = plan.resources.find((resource) => resource.name === 'Lilu.kext');
+
+    assert.equal(lilu?.source, 'https://example.com/Lilu.kext.zip');
+    assert.equal(lilu?.expectedIdentityOrVersion, 'Direct asset (direct)');
+    assert.equal(lilu?.sourceClass, 'downloaded');
+  });
+
   test('renders provenance and validation state per resource', () => {
     const html = renderToStaticMarkup(React.createElement(ResourcePlanPanel, {
       plan: {

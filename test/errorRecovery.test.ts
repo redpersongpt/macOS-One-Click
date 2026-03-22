@@ -50,6 +50,16 @@ describe('error recovery messaging', () => {
     assert.match(biosBlocked.nextStep, /recheck bios/i);
   });
 
+  test('keeps partition-table safety blocks on the correct remediation path', () => {
+    const unknownPartition = structureError('SAFETY BLOCK: Cannot read partition table for disk0 — refusing to shrink an unidentified disk');
+    const mbrPartition = structureError('SAFETY BLOCK: \\\\.\\PhysicalDrive5 uses MBR partition table — OpenCore requires GPT');
+
+    assert.match(unknownPartition.title, /cannot read partition table/i);
+    assert.doesNotMatch(unknownPartition.title, /system disk/i);
+    assert.match(mbrPartition.title, /mbr partition table/i);
+    assert.doesNotMatch(mbrPartition.title, /system disk/i);
+  });
+
   test('classifies classified recovery rejection and pre-build failures without falling back to unknown retry', () => {
     const recovery = getSuggestionPayload({
       errorMessage: 'Apple recovery server rejected the request: Apple’s recovery service refused the download request.',

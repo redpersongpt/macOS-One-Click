@@ -9,6 +9,10 @@ import * as tls from 'tls';
 import * as fs from 'fs';
 import * as os from 'os';
 import { probeAppleRecoveryEndpoint } from './appleRecovery.js';
+import {
+  resolveKextSourcePlan,
+  type KextRegistryEntry,
+} from './kextSourcePolicy.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -36,6 +40,7 @@ export interface KextAvailability {
   version?: string;
   assetUrl?: string;
   error?: string;
+  source?: 'bundled' | 'github' | 'direct' | 'embedded' | 'failed';
 }
 
 export interface DiskHealthCheck {
@@ -166,12 +171,47 @@ function checkGitHubRateLimit(): Promise<GitHubRateLimitInfo | null> {
 }
 
 // ── Kext Availability Check ──────────────────────────────────────────────────
-// Uses HEAD requests against the GitHub API to verify each kext release exists
-// without actually downloading anything.
+// Uses HEAD requests against GitHub or direct asset URLs to verify each kext
+// has a real delivery path before the build starts.
 
-interface KextRegistryEntry {
-  repo: string;
-  assetFilter?: string;
+function probeUrl(urlString: string, timeoutMs = 10_000): Promise<{ reachable: boolean; httpCode?: number; error?: string }> {
+  return new Promise((resolve) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(urlString);
+    } catch {
+      resolve({ reachable: false, error: `Invalid URL: ${urlString}` });
+      return;
+    }
+
+    const isHttps = parsed.protocol === 'https:';
+    const lib = isHttps ? https : require('http');
+    const req = lib.request({
+      hostname: parsed.hostname,
+      port: parsed.port || (isHttps ? 443 : 80),
+      path: parsed.pathname + parsed.search,
+      method: 'HEAD',
+      headers: { 'User-Agent': 'macOS-One-Click/1.0' },
+      timeout: timeoutMs,
+    }, (res: any) => {
+      if ([301, 302, 307, 308].includes(res.statusCode) && res.headers.location) {
+        res.destroy();
+        probeUrl(res.headers.location, timeoutMs).then(resolve);
+        return;
+      }
+      res.destroy();
+      resolve({
+        reachable: (res.statusCode ?? 0) >= 200 && (res.statusCode ?? 0) < 400,
+        httpCode: res.statusCode,
+      });
+    });
+    req.on('error', (error: Error) => resolve({ reachable: false, error: error.message }));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve({ reachable: false, error: 'timeout' });
+    });
+    req.end();
+  });
 }
 
 function checkKextAvailability(
@@ -179,7 +219,33 @@ function checkKextAvailability(
   registry: Record<string, KextRegistryEntry>,
 ): Promise<KextAvailability> {
   const entry = registry[kextName];
-  if (!entry) return Promise.resolve({ name: kextName, repo: 'bundled', available: true, version: 'bundled' });
+  if (!entry) {
+    return Promise.resolve({
+      name: kextName,
+      repo: 'bundled',
+      available: true,
+      version: 'bundled',
+      source: 'bundled',
+    });
+  }
+
+  if (entry.directUrl) {
+    return probeUrl(entry.directUrl, 10_000).then((result) => {
+      const resolution = resolveKextSourcePlan(kextName, entry, null, {
+        directUrlReachable: result.reachable,
+        directUrlError: result.error ?? (result.httpCode ? `HTTP ${result.httpCode}` : null),
+      });
+      return {
+        name: kextName,
+        repo: entry.repo,
+        available: resolution.available,
+        version: resolution.version ?? undefined,
+        assetUrl: resolution.assetUrl ?? undefined,
+        error: resolution.available ? undefined : resolution.message,
+        source: resolution.route,
+      };
+    });
+  }
 
   return new Promise((resolve) => {
     const req = https.request({
@@ -203,26 +269,76 @@ function checkKextAvailability(
       res.on('end', () => {
         try {
           const release = JSON.parse(data);
-          const version = release.tag_name || 'unknown';
-          const assets: { name: string; browser_download_url: string }[] = release.assets || [];
-          let asset = assets.find(a => a.name.endsWith('.zip') && (!entry.assetFilter || a.name.toUpperCase().includes(entry.assetFilter.toUpperCase())));
-          if (!asset) asset = assets.find(a => a.name.endsWith('.zip'));
+          const resolution = resolveKextSourcePlan(kextName, entry, {
+            version: release.tag_name || 'unknown',
+            assetUrl: (() => {
+              const assets: { name: string; browser_download_url: string }[] = release.assets || [];
+              let asset = assets.find(a => a.name.endsWith('.zip') && (!entry.assetFilter || a.name.toUpperCase().includes(entry.assetFilter.toUpperCase())));
+              if (!asset) asset = assets.find(a => a.name.endsWith('.zip'));
+              return asset?.browser_download_url ?? null;
+            })(),
+            error: null,
+          });
           resolve({
             name: kextName,
             repo: entry.repo,
-            available: !!asset,
-            version,
-            assetUrl: asset?.browser_download_url,
-            error: asset ? undefined : 'No matching .zip asset in latest release',
+            available: resolution.available,
+            version: resolution.version ?? undefined,
+            assetUrl: resolution.assetUrl ?? undefined,
+            error: resolution.available ? undefined : resolution.message,
+            source: resolution.route,
           });
         } catch {
-          resolve({ name: kextName, repo: entry.repo, available: false, error: 'Failed to parse release' });
+          const resolution = resolveKextSourcePlan(kextName, entry, { error: 'Failed to parse release' });
+          resolve({
+            name: kextName,
+            repo: entry.repo,
+            available: resolution.available,
+            version: resolution.version ?? undefined,
+            assetUrl: resolution.assetUrl ?? undefined,
+            error: resolution.available ? undefined : resolution.message,
+            source: resolution.route,
+          });
         }
       });
-      res.on('error', (e) => resolve({ name: kextName, repo: entry.repo, available: false, error: e.message }));
+      res.on('error', (e) => {
+        const resolution = resolveKextSourcePlan(kextName, entry, { error: e.message });
+        resolve({
+          name: kextName,
+          repo: entry.repo,
+          available: resolution.available,
+          version: resolution.version ?? undefined,
+          assetUrl: resolution.assetUrl ?? undefined,
+          error: resolution.available ? undefined : resolution.message,
+          source: resolution.route,
+        });
+      });
     });
-    req.on('error', (e) => resolve({ name: kextName, repo: entry.repo, available: false, error: e.message }));
-    req.on('timeout', () => { req.destroy(); resolve({ name: kextName, repo: entry.repo, available: false, error: 'timeout' }); });
+    req.on('error', (e) => {
+      const resolution = resolveKextSourcePlan(kextName, entry, { error: e.message });
+      resolve({
+        name: kextName,
+        repo: entry.repo,
+        available: resolution.available,
+        version: resolution.version ?? undefined,
+        assetUrl: resolution.assetUrl ?? undefined,
+        error: resolution.available ? undefined : resolution.message,
+        source: resolution.route,
+      });
+    });
+    req.on('timeout', () => {
+      req.destroy();
+      const resolution = resolveKextSourcePlan(kextName, entry, { error: 'timeout' });
+      resolve({
+        name: kextName,
+        repo: entry.repo,
+        available: resolution.available,
+        version: resolution.version ?? undefined,
+        assetUrl: resolution.assetUrl ?? undefined,
+        error: resolution.available ? undefined : resolution.message,
+        source: resolution.route,
+      });
+    });
     req.end();
   });
 }
@@ -318,6 +434,11 @@ export async function runPreflightChecks(
     checkGitHubRateLimit(),
   ]);
 
+  const apiDependentKexts = kextNames.filter((name) => {
+    const entry = kextRegistry[name];
+    return !!entry && !entry.directUrl && !entry.embeddedFallback;
+  });
+
   // Network overall assessment
   const networkOverall = (!githubApi.reachable && !appleRecovery.reachable)
     ? 'down' as const
@@ -328,18 +449,27 @@ export async function runPreflightChecks(
   if (networkOverall === 'down') {
     blockers.push('No network connectivity — both GitHub and Apple servers are unreachable.');
   } else if (!githubApi.reachable) {
-    warnings.push('GitHub API is unreachable — kext downloads will fail.');
+    warnings.push(
+      apiDependentKexts.length > 0
+        ? 'GitHub API is unreachable. Some kexts have no local fallback, so the build may stop before writing anything.'
+        : 'GitHub API is unreachable. Bundled or direct-download fallbacks will be used where available.',
+    );
   }
 
   // Rate limit
   if (rateLimit && !rateLimit.sufficient) {
-    warnings.push(`GitHub API rate limit is low (${rateLimit.remaining}/${rateLimit.limit} remaining). Build may fail. Resets at ${new Date(rateLimit.resetAt).toLocaleTimeString()}.`);
+    warnings.push(
+      apiDependentKexts.length > 0
+        ? `GitHub API rate limit is low (${rateLimit.remaining}/${rateLimit.limit} remaining). Some kexts may fail until the limit resets at ${new Date(rateLimit.resetAt).toLocaleTimeString()}.`
+        : `GitHub API rate limit is low (${rateLimit.remaining}/${rateLimit.limit} remaining), but the required kexts have bundled or direct-download fallbacks.`,
+    );
   }
 
-  // Kext availability (only check if GitHub is reachable)
+  // Kext availability — still evaluate every kext even if GitHub is degraded,
+  // because some entries can use direct URLs or bundled fallbacks.
   let kextResults: KextAvailability[] = [];
   let kextAllAvailable = true;
-  if (githubApi.reachable && kextNames.length > 0) {
+  if (kextNames.length > 0) {
     // Check kexts in batches of 4 to avoid hammering the API
     const batches: string[][] = [];
     for (let i = 0; i < kextNames.length; i += 4) {
@@ -354,11 +484,9 @@ export async function runPreflightChecks(
     const unavailable = kextResults.filter(k => !k.available);
     kextAllAvailable = unavailable.length === 0;
     if (unavailable.length > 0) {
-      const names = unavailable.map(k => k.name).join(', ');
-      warnings.push(`${unavailable.length} kext(s) unavailable: ${names}. Build will produce incomplete EFI.`);
+      const names = unavailable.map(k => `${k.name}${k.error ? ` (${k.error})` : ''}`).join(', ');
+      warnings.push(`${unavailable.length} required kext(s) are not reachable: ${names}. The build will stop before writing anything. Check the Resource Plan for the exact source path, then retry once the network or GitHub limit recovers.`);
     }
-  } else if (!githubApi.reachable) {
-    kextAllAvailable = false;
   }
 
   // Disk health

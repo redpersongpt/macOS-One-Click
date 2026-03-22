@@ -60,11 +60,12 @@ function warning(
 
 function inferIssueSource(
   issue: ValidationIssue,
-  kextSources: Record<string, 'github' | 'embedded' | 'failed'>,
+  kextSources: Record<string, 'github' | 'embedded' | 'direct' | 'failed'>,
 ): ValidationTraceSource {
   if (issue.component.endsWith('.kext')) {
     const source = kextSources[issue.component];
     if (source === 'github' || source === 'embedded') return source;
+    if (source === 'direct') return 'github';
     return 'unknown';
   }
   if (
@@ -85,7 +86,7 @@ function inferIssueSource(
 
 function buildValidationTrace(
   issues: ValidationIssue[],
-  kextSources: Record<string, 'github' | 'embedded' | 'failed'>,
+  kextSources: Record<string, 'github' | 'embedded' | 'direct' | 'failed'>,
 ): ValidationTrace | null {
   const first = issues.find(issue => issue.severity === 'blocked') ?? issues[0] ?? null;
   if (!first) return null;
@@ -269,7 +270,7 @@ const LILU_PLUGIN_KEXTS = new Set([
 export async function validateEfi(
   efiPath: string,
   profile: HardwareProfile | null,
-  kextSourceHints: Record<string, 'github' | 'embedded' | 'failed'> = {},
+  kextSourceHints: Record<string, 'github' | 'embedded' | 'direct' | 'failed'> = {},
 ): Promise<ValidationResult> {
   const issues: ValidationIssue[] = [];
 

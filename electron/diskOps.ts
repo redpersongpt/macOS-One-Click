@@ -123,7 +123,37 @@ export function buildLinuxFirstPartitionPath(device: string): string {
   return /(?:nvme\d+n\d+|mmcblk\d+|loop\d+)$/i.test(device) ? `${device}p1` : `${device}1`;
 }
 
-export function buildWindowsFlashDiskpartScript(diskNum: string): string {
+export function buildWindowsPhysicalDrivePath(diskNumber: string | number): string {
+  const normalized = String(diskNumber).trim();
+  const fromDiskAlias = normalized.match(/^disk(\d+)$/i)?.[1];
+  const fromPhysicalDrive = normalized.match(/PhysicalDrive(\d+)/i)?.[1];
+  const resolved = fromDiskAlias ?? fromPhysicalDrive ?? normalized;
+  return `\\\\.\\PhysicalDrive${resolved}`;
+}
+
+export function isWindowsUsbLikeDisk(input: {
+  busType?: string | null;
+  interfaceType?: string | null;
+  pnpDeviceId?: string | null;
+  mediaType?: string | null;
+  isBoot?: boolean | null;
+  isSystem?: boolean | null;
+}): boolean {
+  if (input.isBoot === true || input.isSystem === true) return false;
+
+  const busType = String(input.busType ?? '').trim().toUpperCase();
+  const interfaceType = String(input.interfaceType ?? '').trim().toUpperCase();
+  const pnpDeviceId = String(input.pnpDeviceId ?? '').trim().toUpperCase();
+  const mediaType = String(input.mediaType ?? '').trim().toUpperCase();
+
+  return busType === 'USB'
+    || interfaceType === 'USB'
+    || pnpDeviceId.includes('USBSTOR')
+    || pnpDeviceId.startsWith('USB\\')
+    || mediaType.includes('REMOVABLE');
+}
+
+export function buildWindowsFlashDiskpartScript(diskNum: string, partitionSizeMB?: number): string {
   return [
     `select disk ${diskNum}`,
     'attributes disk clear readonly noerr',
@@ -131,12 +161,27 @@ export function buildWindowsFlashDiskpartScript(diskNum: string): string {
     'online disk noerr',
     'clean noerr',
     'convert gpt noerr',
-    'create partition primary noerr',
+    partitionSizeMB && partitionSizeMB > 0
+      ? `create partition primary size=${partitionSizeMB} noerr`
+      : 'create partition primary noerr',
     'format fs=fat32 quick label=OPENCORE noerr',
     'assign noerr',
     'rescan',
     '',
   ].join('\n');
+}
+
+export function getWindowsFat32PartitionSizeMB(deviceSizeBytes: number): number | undefined {
+  return deviceSizeBytes > 32_000_000_000 ? 30_000 : undefined;
+}
+
+export function shouldRetryWindowsFlashPreparation(input: {
+  attempt: number;
+  maxAttempts: number;
+  diskpartFailed: boolean;
+  driveLetter: string;
+}): boolean {
+  return input.diskpartFailed && !input.driveLetter && input.attempt < input.maxAttempts - 1;
 }
 
 export function createDiskOps(log: LogFunction): DiskOps {
@@ -172,6 +217,32 @@ export function createDiskOps(log: LogFunction): DiskOps {
     return device.match(/PhysicalDrive(\d+)/i)?.[1]
       || device.match(/^disk(\d+)$/i)?.[1]
       || null;
+  }
+
+  async function listWindowsDisks(register?: (child: any) => void): Promise<Array<{
+    Number: number;
+    FriendlyName?: string;
+    Size?: number;
+    BusType?: string;
+    Path?: string;
+    IsBoot?: boolean;
+    IsSystem?: boolean;
+    InterfaceType?: string;
+    PNPDeviceID?: string;
+    MediaType?: string;
+    Model?: string;
+  }>> {
+    try {
+      const { stdout } = await runCmd(
+        'powershell -NoProfile -Command "$cim = Get-CimInstance Win32_DiskDrive | Select-Object Index,InterfaceType,PNPDeviceID,MediaType,Model; Get-Disk | ForEach-Object { $disk = $_; $drive = $cim | Where-Object { $_.Index -eq $disk.Number } | Select-Object -First 1; [pscustomobject]@{ Number = $disk.Number; FriendlyName = $disk.FriendlyName; Size = $disk.Size; BusType = if ($disk.BusType) { $disk.BusType.ToString() } else { $null }; Path = $disk.Path; IsBoot = $disk.IsBoot; IsSystem = $disk.IsSystem; InterfaceType = $drive.InterfaceType; PNPDeviceID = $drive.PNPDeviceID; MediaType = $drive.MediaType; Model = $drive.Model } } | ConvertTo-Json -Compress"',
+        register,
+      );
+      const parsed = JSON.parse(stdout || '[]');
+      if (Array.isArray(parsed)) return parsed;
+      return parsed ? [parsed] : [];
+    } catch {
+      return [];
+    }
   }
 
   async function getWindowsDriveLetterForLabel(diskNum: string, label: string, register?: (child: any) => void): Promise<string> {
@@ -564,7 +635,7 @@ export function createDiskOps(log: LogFunction): DiskOps {
         if (stdout.includes('gpt')) return 'gpt';
         if (stdout.includes('msdos')) return 'mbr';
       } else if (process.platform === 'win32') {
-        const diskNum = device.match(/PhysicalDrive(\d+)/)?.[1];
+        const diskNum = getWindowsDiskNumber(device);
         if (diskNum) {
           const { stdout } = await runCmd(`powershell -NoProfile -Command "Get-Disk -Number ${diskNum} | Select-Object -ExpandProperty PartitionStyle"`);
           if (stdout.trim().toUpperCase() === 'GPT') return 'gpt';
@@ -597,7 +668,7 @@ export function createDiskOps(log: LogFunction): DiskOps {
           if (mp) mounts.push(mp);
         }
       } else if (process.platform === 'win32') {
-        const diskNum = device.match(/PhysicalDrive(\d+)/)?.[1];
+        const diskNum = getWindowsDiskNumber(device);
         if (diskNum) {
           const { stdout } = await runCmd(`powershell -NoProfile -Command "Get-Partition -DiskNumber ${diskNum} | Get-Volume | Select-Object DriveLetter | ConvertTo-Json"`);
           try {
@@ -623,7 +694,7 @@ export function createDiskOps(log: LogFunction): DiskOps {
         const { stdout } = await runCmd(`lsblk -bno SIZE ${device} 2>/dev/null`);
         return parseInt(stdout.trim()) || 0;
       } else if (process.platform === 'win32') {
-        const diskNum = device.match(/PhysicalDrive(\d+)/)?.[1] || device.match(/disk(\d+)/)?.[1];
+        const diskNum = getWindowsDiskNumber(device);
         if (diskNum) {
           const { stdout } = await runCmd(`powershell -NoProfile -Command "(Get-Disk -Number ${diskNum}).Size"`);
           return parseInt(stdout.trim()) || 0;
@@ -667,7 +738,11 @@ export function createDiskOps(log: LogFunction): DiskOps {
     }
 
     // 2. SYSTEM_DISK
-    if (sysDisk && (device === sysDisk || device.startsWith(sysDisk + 's') || device.replace(/p?\d+$/, '') === sysDisk)) {
+    const isWindowsSystemDisk = process.platform === 'win32'
+      && !!sysDisk
+      && !!getWindowsDiskNumber(device)
+      && getWindowsDiskNumber(device) === getWindowsDiskNumber(sysDisk);
+    if (isWindowsSystemDisk || (sysDisk && process.platform !== 'win32' && (device === sysDisk || device.startsWith(sysDisk + 's') || device.replace(/p?\d+$/, '') === sysDisk))) {
       const v: SafetyCheckViolation = {
         code: 'SYSTEM_DISK',
         severity: 'fatal',
@@ -750,7 +825,7 @@ export function createDiskOps(log: LogFunction): DiskOps {
         const { stdout } = await runCmd(`lsblk -no MODEL ${device} 2>/dev/null`);
         return stdout.trim() || '';
       } else if (process.platform === 'win32') {
-        const diskNum = device.match(/PhysicalDrive(\d+)/)?.[1];
+        const diskNum = getWindowsDiskNumber(device);
         if (diskNum) {
           const { stdout } = await runCmd(`powershell -NoProfile -Command "(Get-Disk -Number ${diskNum}).FriendlyName"`);
           return stdout.trim() || '';
@@ -777,7 +852,9 @@ export function createDiskOps(log: LogFunction): DiskOps {
       withBestEffort(getDeviceModel(device), '', queryTimeoutMs),
       withBestEffort(identityPromise, {} as Partial<DiskInfo>, queryTimeoutMs),
     ]);
-    const isSystemDisk = !!sysDisk && (device === sysDisk || device.startsWith(sysDisk + 's') || device.replace(/p?\d+$/, '') === sysDisk);
+    const isSystemDisk = process.platform === 'win32'
+      ? !!sysDisk && !!getWindowsDiskNumber(device) && getWindowsDiskNumber(device) === getWindowsDiskNumber(sysDisk)
+      : !!sysDisk && (device === sysDisk || device.startsWith(sysDisk + 's') || device.replace(/p?\d+$/, '') === sysDisk);
     return {
       device,
       isSystemDisk,
@@ -960,7 +1037,9 @@ export function createDiskOps(log: LogFunction): DiskOps {
       } else if (process.platform === 'win32') {
         const diskNum = getWindowsDiskNumber(device);
         if (!diskNum) throw new Error(`Invalid device path: ${device}`);
-        const script = buildWindowsFlashDiskpartScript(diskNum);
+        const deviceSizeBytes = await getDeviceSize(device).catch(() => 0);
+        const partitionSizeMB = getWindowsFat32PartitionSizeMB(deviceSizeBytes);
+        const script = buildWindowsFlashDiskpartScript(diskNum, partitionSizeMB);
         const scriptPath = path.join(os.tmpdir(), `oc-diskpart-${crypto.randomUUID()}.txt`);
         fs.writeFileSync(scriptPath, script);
 
@@ -973,28 +1052,49 @@ export function createDiskOps(log: LogFunction): DiskOps {
             await new Promise((resolve) => setTimeout(resolve, 500));
           }
 
-          onPhase('format', `Running diskpart on disk ${diskNum}`);
-          checkAborted();
-          log('DEBUG', 'usb-flash', 'Running diskpart', { diskNum });
-          let diskpartFailed = false;
-          try {
-            await runCmd(`diskpart /s "${scriptPath}"`, registerProcess);
-          } catch (error) {
-            diskpartFailed = true;
-            log('WARN', 'usb-flash', 'diskpart reported an error while preparing the USB; checking whether the partition was created anyway', {
-              diskNum,
-              error: (error as Error).message,
-            });
+          let driveLetter = '';
+          let lastDiskpartError: Error | null = null;
+          const maxDiskpartAttempts = 2;
+          for (let attempt = 0; attempt < maxDiskpartAttempts; attempt += 1) {
+            onPhase('format', attempt === 0
+              ? `Running diskpart on disk ${diskNum}`
+              : `Retrying disk ${diskNum} after clearing stale Windows mounts`);
+            checkAborted();
+            log('DEBUG', 'usb-flash', 'Running diskpart', { diskNum, attempt: attempt + 1 });
+            let diskpartFailed = false;
+            try {
+              await runCmd(`diskpart /s "${scriptPath}"`, registerProcess);
+              lastDiskpartError = null;
+            } catch (error) {
+              diskpartFailed = true;
+              lastDiskpartError = error as Error;
+              log('WARN', 'usb-flash', 'diskpart reported an error while preparing the USB; checking whether the partition was created anyway', {
+                diskNum,
+                attempt: attempt + 1,
+                error: (error as Error).message,
+              });
+            }
+
+            driveLetter = await waitForWindowsDriveLetterForLabel(diskNum, 'OPENCORE', registerProcess);
+            if (!driveLetter) {
+              driveLetter = await assignWindowsDriveLetter(diskNum, 'OPENCORE', registerProcess);
+            }
+            if (driveLetter) break;
+            if (!shouldRetryWindowsFlashPreparation({
+              attempt,
+              maxAttempts: maxDiskpartAttempts,
+              diskpartFailed,
+              driveLetter,
+            })) {
+              break;
+            }
+            log('WARN', 'usb-flash', 'Retrying diskpart after stale Windows mount cleanup', { diskNum, attempt: attempt + 1 });
+            await detachWindowsDriveLetters(diskNum, registerProcess).catch(() => {});
+            await new Promise((resolve) => setTimeout(resolve, 700));
           }
 
-          // Resolve drive letter from the specific disk number, not a global label search.
-          // A global label search can match the wrong volume if another OPENCORE disk exists.
-          let driveLetter = await waitForWindowsDriveLetterForLabel(diskNum, 'OPENCORE', registerProcess);
-          if (!driveLetter) {
-            driveLetter = await assignWindowsDriveLetter(diskNum, 'OPENCORE', registerProcess);
-          }
-          if (!driveLetter && diskpartFailed) {
-            throw new Error(`diskpart could not prepare disk ${diskNum}. Disconnect any open Explorer windows for that USB, reconnect the drive, and try again.`);
+          if (!driveLetter && lastDiskpartError) {
+            throw new Error(`diskpart could not prepare disk ${diskNum}. Close Explorer windows or antivirus scans on that USB, unplug and reconnect it, then try again.`);
           }
           if (!driveLetter) throw new Error(`Could not determine drive letter for disk ${diskNum} — diskpart may have failed or Windows has not mounted the new volume yet`);
 
@@ -1148,11 +1248,22 @@ export function createDiskOps(log: LogFunction): DiskOps {
   async function getHardDrives(): Promise<Array<{ name: string; device: string; size: string; type: string }>> {
     const drives: Array<{ name: string; device: string; size: string; type: string }> = [];
     if (process.platform === 'win32') {
-      const { stdout } = await runCmd('powershell -NoProfile -Command "Get-Disk | Where-Object BusType -ne \'USB\' | Select-Object Number,FriendlyName,Size,BusType | ConvertTo-Json"');
-      const data = JSON.parse(stdout || '[]');
-      const arr = Array.isArray(data) ? data : [data];
-      for (const d of arr) {
-        drives.push({ name: d.FriendlyName, device: `disk${d.Number}`, size: `${(d.Size / 1e9).toFixed(1)} GB`, type: d.BusType });
+      const disks = await listWindowsDisks();
+      for (const disk of disks) {
+        if (isWindowsUsbLikeDisk({
+          busType: disk.BusType,
+          interfaceType: disk.InterfaceType,
+          pnpDeviceId: disk.PNPDeviceID,
+          mediaType: disk.MediaType,
+          isBoot: disk.IsBoot,
+          isSystem: disk.IsSystem,
+        })) continue;
+        drives.push({
+          name: disk.FriendlyName || disk.Model || `Disk ${disk.Number}`,
+          device: buildWindowsPhysicalDrivePath(disk.Number),
+          size: typeof disk.Size === 'number' ? `${(disk.Size / 1e9).toFixed(1)} GB` : 'Unknown',
+          type: disk.BusType || disk.InterfaceType || 'Disk',
+        });
       }
     } else if (process.platform === 'darwin') {
       const { stdout } = await runCmd('diskutil list internal physical');
@@ -1203,18 +1314,22 @@ export function createDiskOps(log: LogFunction): DiskOps {
         }
       } catch {}
     } else if (process.platform === 'win32') {
-      try {
-        const { stdout } = await runCmd('powershell -NoProfile -Command "Get-Disk | Where-Object BusType -eq \'USB\' | Select-Object Number,FriendlyName,Size | ConvertTo-Json"');
-        const disks = JSON.parse(stdout);
-        const diskArray = Array.isArray(disks) ? disks : [disks];
-        for (const disk of diskArray) {
-          drives.push({
-            name: disk.FriendlyName,
-            device: `\\\\.\\PhysicalDrive${disk.Number}`,
-            size: `${(disk.Size / 1e9).toFixed(1)} GB`
-          });
-        }
-      } catch {}
+      const disks = await listWindowsDisks();
+      for (const disk of disks) {
+        if (!isWindowsUsbLikeDisk({
+          busType: disk.BusType,
+          interfaceType: disk.InterfaceType,
+          pnpDeviceId: disk.PNPDeviceID,
+          mediaType: disk.MediaType,
+          isBoot: disk.IsBoot,
+          isSystem: disk.IsSystem,
+        })) continue;
+        drives.push({
+          name: disk.FriendlyName || disk.Model || `Disk ${disk.Number}`,
+          device: buildWindowsPhysicalDrivePath(disk.Number),
+          size: typeof disk.Size === 'number' ? `${(disk.Size / 1e9).toFixed(1)} GB` : 'Unknown',
+        });
+      }
     }
 
     return drives;

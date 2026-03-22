@@ -11,7 +11,7 @@ export type TaskStatus =
 
 // Task progress payloads — renderer uses these for display
 export interface KextFetchProgress {
-  kind: 'kext-fetch'; kextName: string; version: string; index: number; total: number; source?: 'github' | 'embedded' | 'failed';
+  kind: 'kext-fetch'; kextName: string; version: string; index: number; total: number; source?: 'github' | 'embedded' | 'direct' | 'failed';
 }
 export interface RecoveryDownloadProgress {
   kind: 'recovery-download'; percent: number; status: string;

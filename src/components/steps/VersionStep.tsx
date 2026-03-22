@@ -30,7 +30,7 @@ export default function VersionStep({
       <div className="space-y-2">
         <h2 className="text-4xl font-bold text-white">Choose macOS</h2>
         <p className="max-w-2xl text-sm font-medium leading-relaxed text-white/55">
-          Start with the strongest real-world target for this hardware. Older or riskier versions stay visible below, but the best first build is highlighted up front.
+          Start with the version most likely to boot cleanly on this hardware. Older and riskier targets stay visible below if you want to experiment later.
         </p>
       </div>
 
@@ -59,7 +59,7 @@ export default function VersionStep({
                   {recommendedRow.status}
                 </span>
                 <span className="rounded-full border border-white/10 bg-black/18 px-2.5 py-1 text-white/50">
-                  Best first build before you branch into extra fixes
+                  Recommended first build
                 </span>
               </div>
             </div>
@@ -76,8 +76,8 @@ export default function VersionStep({
               )}
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-xs leading-relaxed text-white/58">
                 {selectedRow?.versionName === recommendedRow.versionName
-                  ? 'You are already on the recommended path for a first build.'
-                  : `Current selection: ${selectedVersion}. Move to the recommended target first if you want the cleanest troubleshooting path.`}
+                  ? 'You are already on the recommended starting point.'
+                  : `Current selection: ${selectedVersion}. Switch to ${recommendedRow.versionName} for the cleanest first attempt.`}
               </div>
             </div>
           </div>

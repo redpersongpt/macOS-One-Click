@@ -61,7 +61,7 @@ export interface SuggestionContext {
   diskInfo?: { partitionTable?: string; isSystemDisk?: boolean } | null;
   validationIssues?: ValidationIssue[];
   validationTrace?: ValidationTrace | null;
-  kextSources?: Record<string, 'github' | 'embedded' | 'failed'>;
+  kextSources?: Record<string, 'github' | 'embedded' | 'direct' | 'failed'>;
 }
 
 // ─── Helper ─────────────────────────────────────────────────────────────────

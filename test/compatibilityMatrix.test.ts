@@ -158,5 +158,23 @@ describe('compatibility matrix', () => {
     assert.match(html, /Recommended/);
     assert.match(html, /Selected/);
     assert.match(html, /Manual fixes likely/);
+    assert.match(html, /Best first build for this hardware\./);
+    assert.match(html, /Usable, but expect extra tuning\./);
+    assert.doesNotMatch(html, /Best starting point if you want the least friction during the first build\./);
+  });
+
+  test('uses the simpler supported explanation for AMD desktops with a valid display path', () => {
+    const report = checkCompatibility(makeProfile({
+      cpu: 'AMD Ryzen 7 7700X',
+      architecture: 'AMD',
+      generation: 'Ryzen',
+      gpu: 'AMD Radeon RX 6800',
+      gpuDevices: [{ name: 'AMD Radeon RX 6800', vendorName: 'AMD' }],
+      motherboard: 'ASUS Prime X670-P',
+      targetOS: 'macOS Tahoe 26',
+      smbios: 'iMacPro1,1',
+    }));
+
+    assert.equal(report.explanation, 'AMD desktop with a supported display path. This is a solid OpenCore starting point.');
   });
 });

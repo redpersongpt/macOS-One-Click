@@ -107,12 +107,12 @@ export default function CompatibilityMatrix({
 
               <div className="mt-auto border-t border-white/8 pt-3 text-[11px] leading-relaxed text-white/46">
                 {row.status === 'blocked'
-                  ? 'Not available for build. Use the recommended version instead of forcing this target.'
+                  ? 'Do not build this target. Use the recommended version instead.'
                   : row.status === 'supported'
-                  ? 'Best starting point if you want the least friction during the first build.'
+                  ? 'Best first build for this hardware.'
                   : row.status === 'experimental'
-                  ? 'Reasonable real-world path, but expect firmware tuning, older ceilings, or one or two manual fixes.'
-                  : 'Worth trying only if you are prepared to troubleshoot audio, sleep, graphics, or input issues yourself.'}
+                  ? 'Usable, but expect extra tuning.'
+                  : 'Only try this if you are ready to troubleshoot it yourself.'}
               </div>
             </div>
           </div>

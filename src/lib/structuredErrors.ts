@@ -132,16 +132,16 @@ const ERROR_MAP: Array<{
     },
   },
   {
-    test: m => m.includes('safety block') || m.includes('system/boot disk') || m.includes('system disk'),
+    test: m => m.includes('cannot read partition table') || m.includes('unknown_partition_table'),
     structured: {
-      title: 'System disk blocked',
-      what: 'The selected drive is your main system disk. Flashing it would erase your operating system.',
-      nextStep: 'Select a different removable USB drive from the list and try again.',
+      title: 'Cannot read partition table',
+      what: 'The app could not determine whether the selected drive uses GPT or MBR.',
+      nextStep: 'Reconnect the drive, click Refresh, and if needed reformat it as GPT before retrying the operation.',
       retryable: true,
     },
   },
   {
-    test: m => m.includes('mbr_partition_table') || m.includes('mbr partition'),
+    test: m => m.includes('uses mbr partition table') || m.includes('mbr_partition_table') || m.includes('mbr partition'),
     structured: {
       title: 'MBR partition table',
       what: 'The drive uses an MBR partition table. OpenCore requires GPT.',
@@ -149,6 +149,15 @@ const ERROR_MAP: Array<{
         'Reformat the drive as GPT using Disk Utility (macOS), GParted (Linux), or diskpart (Windows), then retry.',
       retryable: true,
       retryNote: 'after reformatting the drive as GPT',
+    },
+  },
+  {
+    test: m => m.includes('safety block') || m.includes('system/boot disk') || m.includes('system disk'),
+    structured: {
+      title: 'System disk blocked',
+      what: 'The selected drive is your main system disk. Flashing it would erase your operating system.',
+      nextStep: 'Select a different removable USB drive from the list and try again.',
+      retryable: true,
     },
   },
   {
