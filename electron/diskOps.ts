@@ -120,6 +120,30 @@ export interface DiskOps {
 
 import { sim } from './simulation.js';
 
+/**
+ * Parse the stdout of `(Get-Disk -Number N).PartitionStyle.ToString().ToUpper()`.
+ * Returns null when the output is anything other than GPT/MBR (e.g. RAW, ERROR,
+ * empty) so the caller can fall back to an alternative detection method.
+ */
+export function windowsGetDiskStyleOutput(stdout: string): 'gpt' | 'mbr' | null {
+  const s = stdout.trim().toUpperCase();
+  if (s === 'GPT') return 'gpt';
+  if (s === 'MBR') return 'mbr';
+  return null;
+}
+
+/**
+ * Parse the output of the Win32_DiskPartition WMI fallback script.
+ * The script emits 'GPT', 'MBR', 'RAW' (no partitions), or 'ERROR'.
+ * Returns null for RAW/ERROR so 'unknown' propagates correctly.
+ */
+export function windowsWmiDiskStyleOutput(stdout: string): 'gpt' | 'mbr' | null {
+  const s = stdout.trim().toUpperCase();
+  if (s === 'GPT') return 'gpt';
+  if (s === 'MBR') return 'mbr';
+  return null;
+}
+
 export function buildLinuxFirstPartitionPath(device: string): string {
   return /(?:nvme\d+n\d+|mmcblk\d+|loop\d+)$/i.test(device) ? `${device}p1` : `${device}1`;
 }
@@ -793,12 +817,23 @@ export function createDiskOps(log: LogFunction): DiskOps {
         const diskNum = getWindowsDiskNumber(device);
         if (diskNum) {
           const { stdout } = await runCmd(`powershell -NoProfile -Command "try { (Get-Disk -Number ${diskNum} -ErrorAction Stop).PartitionStyle.ToString().ToUpper() } catch { 'ERROR' }"`);
-          const style = stdout.trim().toUpperCase();
-          if (style === 'GPT') return 'gpt';
-          if (style === 'MBR') return 'mbr';
-          // RAW means the disk has no partition table yet — treat as 'unknown' (correct)
-          // ERROR means the disk is not accessible — also 'unknown' (correct)
-          log('WARN', 'diskOps', `Partition style for disk ${diskNum}: "${style}"`, { device });
+          const primary = windowsGetDiskStyleOutput(stdout);
+          if (primary) return primary;
+          // Get-Disk failed or returned an unexpected value (RAW/ERROR).
+          // This happens on some USB controllers where the Storage Management API
+          // (root\Microsoft\Windows\Storage) doesn't work, but the disk is physically
+          // accessible — exactly the case where Disk Management shows GPT but the app
+          // was incorrectly blocking with UNKNOWN_PARTITION_TABLE.
+          // Fall back to Win32_DiskPartition (root\cimv2 legacy WMI), which is more
+          // broadly compatible and is what Disk Management itself uses.
+          log('WARN', 'diskOps', `Get-Disk returned "${stdout.trim()}" for disk ${diskNum}, trying WMI fallback`, { device });
+          const { stdout: wmiOut } = await runCmd(
+            `powershell -NoProfile -Command "try { $p = Get-WmiObject Win32_DiskPartition -Filter 'DiskIndex = ${diskNum}' -ErrorAction Stop | Select-Object -First 1; if ($p) { if ($p.Type -like 'GPT*') { 'GPT' } else { 'MBR' } } else { 'RAW' } } catch { 'ERROR' }"`
+          );
+          const fallback = windowsWmiDiskStyleOutput(wmiOut);
+          if (fallback) return fallback;
+          // RAW (no partitions yet) or ERROR — unknown is the correct result
+          log('WARN', 'diskOps', `WMI fallback returned "${wmiOut.trim()}" for disk ${diskNum}`, { device });
         } else {
           log('WARN', 'diskOps', 'Could not extract disk number from device path', { device });
         }

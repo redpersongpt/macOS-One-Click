@@ -8,6 +8,8 @@ import {
   buildLinuxFirstPartitionPath,
   buildWindowsFlashDiskpartScript,
   buildWindowsBootPartitionDiskpartScript,
+  windowsGetDiskStyleOutput,
+  windowsWmiDiskStyleOutput,
 } from '../electron/diskOps.js';
 
 // ─── Windows disk path normalization ─────────────────────────────────────────
@@ -418,5 +420,71 @@ describe('buildLinuxFirstPartitionPath', () => {
 
   it('appends p1 for mmcblk', () => {
     expect(buildLinuxFirstPartitionPath('/dev/mmcblk0')).toBe('/dev/mmcblk0p1');
+  });
+});
+
+// ─── Windows partition style detection — Get-Disk output parser ──────────────
+// Regression coverage for the GPT false-positive bug (issue #15):
+// On some USB controllers the Storage Management API (used by Get-Disk) fails
+// while the disk is physically GPT. These helpers parse the raw command output
+// so both the primary query and the WMI fallback are independently testable.
+
+describe('windowsGetDiskStyleOutput', () => {
+  it('returns gpt for GPT', () => {
+    expect(windowsGetDiskStyleOutput('GPT')).toBe('gpt');
+  });
+
+  it('returns gpt for GPT with CRLF (Windows line ending)', () => {
+    expect(windowsGetDiskStyleOutput('GPT\r\n')).toBe('gpt');
+  });
+
+  it('returns gpt for lowercase gpt', () => {
+    expect(windowsGetDiskStyleOutput('gpt')).toBe('gpt');
+  });
+
+  it('returns mbr for MBR', () => {
+    expect(windowsGetDiskStyleOutput('MBR')).toBe('mbr');
+  });
+
+  it('returns null for RAW (triggers WMI fallback)', () => {
+    expect(windowsGetDiskStyleOutput('RAW')).toBeNull();
+  });
+
+  it('returns null for ERROR (Get-Disk PS catch block — triggers WMI fallback)', () => {
+    expect(windowsGetDiskStyleOutput('ERROR')).toBeNull();
+  });
+
+  it('returns null for empty string', () => {
+    expect(windowsGetDiskStyleOutput('')).toBeNull();
+  });
+
+  it('returns null for unexpected output', () => {
+    expect(windowsGetDiskStyleOutput('UNKNOWN')).toBeNull();
+  });
+});
+
+describe('windowsWmiDiskStyleOutput', () => {
+  it('returns gpt for GPT (disk has GPT partitions via Win32_DiskPartition)', () => {
+    expect(windowsWmiDiskStyleOutput('GPT')).toBe('gpt');
+  });
+
+  it('returns gpt for GPT with CRLF', () => {
+    expect(windowsWmiDiskStyleOutput('GPT\r\n')).toBe('gpt');
+  });
+
+  it('returns mbr for MBR (disk has MBR partitions)', () => {
+    expect(windowsWmiDiskStyleOutput('MBR')).toBe('mbr');
+  });
+
+  it('returns null for RAW (disk has no partitions — unknown is correct)', () => {
+    expect(windowsWmiDiskStyleOutput('RAW')).toBeNull();
+  });
+
+  it('returns null for ERROR (WMI also failed — unknown is correct)', () => {
+    expect(windowsWmiDiskStyleOutput('ERROR')).toBeNull();
+  });
+
+  it('returns null for empty string', () => {
+    expect(windowsWmiDiskStyleOutput('')).toBeNull();
   });
 });
