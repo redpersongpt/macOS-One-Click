@@ -6,6 +6,8 @@ import {
   getWindowsFat32PartitionSizeMB,
   shouldRetryWindowsFlashPreparation,
   buildLinuxFirstPartitionPath,
+  canReusePreparedOpenCoreVolume,
+  buildWindowsConvertToGptDiskpartScript,
   buildWindowsFlashDiskpartScript,
   buildWindowsBootPartitionDiskpartScript,
   windowsGetDiskStyleOutput,
@@ -175,6 +177,33 @@ describe('buildWindowsFlashDiskpartScript', () => {
   it('explicitly re-selects partition 1 before format', () => {
     const script = buildWindowsFlashDiskpartScript('0');
     expect(script).toContain('select partition 1 noerr');
+  });
+});
+
+describe('buildWindowsConvertToGptDiskpartScript', () => {
+  it('includes the GPT conversion commands', () => {
+    const script = buildWindowsConvertToGptDiskpartScript('2');
+    expect(script).toContain('select disk 2');
+    expect(script).toContain('clean noerr');
+    expect(script).toContain('convert gpt noerr');
+    expect(script).toContain('create partition primary noerr');
+    expect(script).toContain('select partition 1 noerr');
+    expect(script).toContain('format fs=fat32 quick label=OPENCORE noerr');
+    expect(script).toContain('assign noerr');
+    expect(script).toContain('rescan');
+  });
+
+  it('uses the Windows FAT32 size cap when provided', () => {
+    const script = buildWindowsConvertToGptDiskpartScript('5', 30000);
+    expect(script).toContain('create partition primary size=30000 noerr');
+  });
+});
+
+describe('canReusePreparedOpenCoreVolume', () => {
+  it('reuses only GPT disks', () => {
+    expect(canReusePreparedOpenCoreVolume('gpt')).toBe(true);
+    expect(canReusePreparedOpenCoreVolume('mbr')).toBe(false);
+    expect(canReusePreparedOpenCoreVolume('unknown')).toBe(false);
   });
 });
 

@@ -53,6 +53,7 @@ export interface ExistingEfiCopyResult extends ExistingEfiInspection {
 
 export type UsbFlashPhase = 'safety' | 'erase' | 'format' | 'copy' | 'verify' | 'eject';
 export type PartitionPhase = 'safety' | 'create-partition' | 'format' | 'mount' | 'copy' | 'unmount';
+export type GptConversionPhase = 'safety' | 'erase' | 'format' | 'verify';
 
 export interface FlashUsbOptions {
   device: string; efiPath: string; confirmed: boolean;
@@ -66,6 +67,13 @@ export interface CreateBootPartitionOptions {
   efiPath: string;
   confirmed: boolean;
   onPhase: (phase: PartitionPhase, detail: string) => void;
+  registerProcess?: (child: any) => void;
+}
+
+export interface ConvertDiskToGptOptions {
+  device: string;
+  confirmed: boolean;
+  onPhase: (phase: GptConversionPhase, detail: string) => void;
   registerProcess?: (child: any) => void;
 }
 
@@ -112,6 +120,7 @@ export interface DiskOps {
   inspectExistingEfi(device: string): Promise<ExistingEfiInspection>;
   copyExistingEfi(device: string, destinationPath: string): Promise<ExistingEfiCopyResult>;
   flashUsb(options: FlashUsbOptions): Promise<void>;
+  convertDiskToGpt(options: ConvertDiskToGptOptions): Promise<DiskInfo>;
   shrinkPartition(disk: string, sizeGB: number, confirmed: boolean): Promise<void>;
   createBootPartition(options: CreateBootPartitionOptions): Promise<void>;
   getHardDrives(): Promise<Array<{ name: string; device: string; size: string; type: string }>>;
@@ -238,6 +247,14 @@ export function buildWindowsFlashDiskpartScript(diskNum: string, partitionSizeMB
     'rescan',
     '',
   ].join('\n');
+}
+
+export function buildWindowsConvertToGptDiskpartScript(diskNum: string, partitionSizeMB?: number): string {
+  return buildWindowsFlashDiskpartScript(diskNum, partitionSizeMB);
+}
+
+export function canReusePreparedOpenCoreVolume(partitionTable: 'gpt' | 'mbr' | 'unknown'): boolean {
+  return partitionTable === 'gpt';
 }
 
 export function buildWindowsBootPartitionDiskpartScript(diskNum: string): string {
@@ -1189,6 +1206,264 @@ export function createDiskOps(log: LogFunction): DiskOps {
     };
   }
 
+  async function waitForGptDiskInfo(device: string, attempts = 10, delayMs = 400): Promise<DiskInfo> {
+    let lastInfo = await getDiskInfo(device);
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      if (lastInfo.partitionTable === 'gpt') return lastInfo;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      lastInfo = await getDiskInfo(device);
+    }
+    return lastInfo;
+  }
+
+  async function prepareWindowsOpenCoreVolume(
+    device: string,
+    onPhase: (phase: 'erase' | 'format', detail: string) => void,
+    registerProcess?: (child: any) => void,
+    checkAborted?: () => void,
+  ): Promise<{ diskNum: string; driveLetter: string }> {
+    const diskNum = getWindowsDiskNumber(device);
+    if (!diskNum) throw new Error(`Invalid device path: ${device}`);
+    const deviceSizeBytes = await getDeviceSize(device).catch(() => 0);
+    const partitionSizeMB = getWindowsFat32PartitionSizeMB(deviceSizeBytes);
+    const currentPartitionTable = await getDiskPartitionTable(device).catch(() => 'unknown' as const);
+    let driveLetter = '';
+
+    if (canReusePreparedOpenCoreVolume(currentPartitionTable)) {
+      driveLetter = await getWindowsDriveLetterForLabel(diskNum, 'OPENCORE', registerProcess);
+      if (driveLetter) {
+        log('INFO', 'diskOps', 'Found existing OPENCORE volume — reusing prepared drive', { diskNum, driveLetter });
+        onPhase('format', `Using existing OPENCORE partition on disk ${diskNum}`);
+        return { diskNum, driveLetter };
+      }
+
+      const preCheckPartitions = await getWindowsPreparedPartitions(diskNum, registerProcess);
+      const reuseCandidate = selectWindowsOpencoreReuseCandidate(preCheckPartitions);
+      if (reuseCandidate) {
+        log('INFO', 'diskOps', 'Found OPENCORE FAT32 partition with no drive letter — assigning', {
+          diskNum,
+          partitionNumber: reuseCandidate.partitionNumber,
+          sizeBytes: reuseCandidate.sizeBytes,
+        });
+        onPhase('format', `Assigning drive letter to existing OPENCORE partition on disk ${diskNum}`);
+        driveLetter = await assignWindowsDriveLetter(
+          diskNum, reuseCandidate.partitionNumber, 'OPENCORE', registerProcess,
+        );
+        if (driveLetter) {
+          log('INFO', 'diskOps', 'Reused existing OPENCORE partition', { diskNum, driveLetter });
+          return { diskNum, driveLetter };
+        }
+      }
+    }
+
+    const mountedPartitions = await getMountedPartitions(device).catch(() => [] as string[]);
+    if (mountedPartitions.length > 0) {
+      onPhase('erase', `Detaching mounted volumes from disk ${diskNum}`);
+      log('WARN', 'diskOps', 'Detaching mounted Windows volumes before GPT conversion/flash prep', {
+        diskNum,
+        mountedPartitions,
+      });
+      await detachWindowsDriveLetters(diskNum, registerProcess);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+
+    const script = buildWindowsConvertToGptDiskpartScript(diskNum, partitionSizeMB);
+    const scriptPath = path.join(os.tmpdir(), `oc-diskpart-${crypto.randomUUID()}.txt`);
+    fs.writeFileSync(scriptPath, script);
+
+    let lastDiskpartError: Error | null = null;
+    let lastAssessment: WindowsFlashPreparationAssessment = {
+      status: 'failed',
+      stage: 'create-partition',
+      driveLetter: '',
+      targetPartitionNumber: null,
+      usedPartitionFallback: false,
+    };
+    let lastObservedPartitions: WindowsFlashPreparedPartition[] = [];
+    const maxDiskpartAttempts = 2;
+
+    try {
+      for (let attempt = 0; attempt < maxDiskpartAttempts; attempt += 1) {
+        onPhase('format', attempt === 0
+          ? `Running diskpart on disk ${diskNum}`
+          : `Retrying disk ${diskNum} after clearing stale Windows mounts`);
+        checkAborted?.();
+        log('DEBUG', 'diskOps', 'Running diskpart for GPT conversion / flash prep', {
+          diskNum,
+          attempt: attempt + 1,
+        });
+        let diskpartFailed = false;
+        try {
+          await runCmd(`diskpart /s "${scriptPath}"`, registerProcess);
+          lastDiskpartError = null;
+        } catch (error) {
+          diskpartFailed = true;
+          lastDiskpartError = error as Error;
+          log('WARN', 'diskOps', 'diskpart reported an error during GPT conversion / flash prep', {
+            diskNum,
+            attempt: attempt + 1,
+            error: (error as Error).message,
+          });
+        }
+
+        lastObservedPartitions = await waitForWindowsPreparedPartitions(
+          diskNum,
+          registerProcess,
+          10,
+          500,
+        );
+        lastAssessment = assessWindowsFlashPreparationState({
+          partitions: lastObservedPartitions,
+          expectedLabel: 'OPENCORE',
+        });
+
+        if (lastAssessment.status === 'failed' && lastAssessment.stage === 'assign') {
+          const assignedLetter = await assignWindowsDriveLetter(
+            diskNum,
+            lastAssessment.targetPartitionNumber,
+            'OPENCORE',
+            registerProcess,
+          );
+          if (assignedLetter) {
+            lastObservedPartitions = await getWindowsPreparedPartitions(diskNum, registerProcess);
+            lastAssessment = assessWindowsFlashPreparationState({
+              partitions: lastObservedPartitions,
+              expectedLabel: 'OPENCORE',
+            });
+          }
+        }
+
+        if (lastAssessment.status === 'ready') {
+          driveLetter = lastAssessment.driveLetter;
+          if (lastAssessment.usedPartitionFallback) {
+            log('WARN', 'diskOps', 'Using partition-based drive letter fallback after OPENCORE label lookup failed', {
+              diskNum,
+              partitionNumber: lastAssessment.targetPartitionNumber,
+              driveLetter,
+              partitions: lastObservedPartitions,
+            });
+          }
+          break;
+        }
+
+        if (!shouldRetryWindowsFlashPreparation({
+          attempt,
+          maxAttempts: maxDiskpartAttempts,
+          diskpartFailed,
+          driveLetter: '',
+          stage: lastAssessment.stage,
+        })) {
+          break;
+        }
+
+        log('WARN', 'diskOps', 'Retrying diskpart after Windows GPT conversion / flash prep failure', {
+          diskNum,
+          attempt: attempt + 1,
+          stage: lastAssessment.stage,
+          partitions: lastObservedPartitions,
+        });
+        await detachWindowsDriveLetters(diskNum, registerProcess).catch(() => {});
+        await new Promise((resolve) => setTimeout(resolve, 700));
+      }
+    } finally {
+      try { fs.unlinkSync(scriptPath); } catch {}
+    }
+
+    if (driveLetter) return { diskNum, driveLetter };
+
+    if (lastAssessment.stage === 'create-partition') {
+      throw new Error(
+        `diskpart failed to create a partition on disk ${diskNum}. ` +
+        'The selected disk never produced a visible partition after the cleanup and GPT conversion steps. ' +
+        'Close all programs using this drive, unplug and reconnect it, then try again. ' +
+        'If it keeps failing, open an elevated Command Prompt and run: diskpart → select disk ' + diskNum + ' → clean → convert gpt → create partition primary → select partition 1 → format fs=fat32 quick label=OPENCORE → assign'
+      );
+    }
+
+    if (lastAssessment.stage === 'format') {
+      const partNum = lastAssessment.targetPartitionNumber ?? 1;
+      log('WARN', 'diskOps', 'diskpart format failed — attempting Format-Volume recovery', { diskNum, partNum });
+      onPhase('format', `Recovering: formatting partition ${partNum} on disk ${diskNum}`);
+      let formatRecovered = false;
+      try {
+        await runCmd(
+          `powershell -NoProfile -Command "try { Format-Volume -DiskNumber ${diskNum} -PartitionNumber ${partNum} -FileSystem FAT32 -NewFileSystemLabel 'OPENCORE' -Confirm:$false -Force -ErrorAction Stop } catch { throw }"`,
+          registerProcess,
+        );
+        const recoveredPartitions = await waitForWindowsPreparedPartitions(diskNum, registerProcess, 10, 500);
+        const recoveredAssessment = assessWindowsFlashPreparationState({
+          partitions: recoveredPartitions,
+          expectedLabel: 'OPENCORE',
+        });
+        if (recoveredAssessment.status === 'ready') {
+          driveLetter = recoveredAssessment.driveLetter;
+          formatRecovered = true;
+        } else if (recoveredAssessment.stage === 'assign') {
+          const assignedLetter = await assignWindowsDriveLetter(
+            diskNum,
+            recoveredAssessment.targetPartitionNumber,
+            'OPENCORE',
+            registerProcess,
+          );
+          if (assignedLetter) {
+            driveLetter = assignedLetter;
+            formatRecovered = true;
+          }
+        }
+      } catch (error) {
+        log('WARN', 'diskOps', 'Format-Volume recovery also failed', {
+          diskNum,
+          partNum,
+          error: (error as Error).message,
+        });
+      }
+      if (formatRecovered && driveLetter) return { diskNum, driveLetter };
+      throw new Error(
+        `diskpart created a partition on disk ${diskNum}, but failed to format it as FAT32 OPENCORE. ` +
+        'The partition exists, but Windows did not report a FAT32 volume on it after diskpart finished. ' +
+        'Close Explorer windows, antivirus scans, or backup tools touching this drive, then retry. ' +
+        'If it keeps failing, format partition 1 manually as FAT32 and label it OPENCORE before retrying.'
+      );
+    }
+
+    if (lastAssessment.stage === 'assign') {
+      log('WARN', 'diskOps', 'All diskpart attempts left no drive letter — final aggressive assign', {
+        diskNum,
+        partitionNumber: lastAssessment.targetPartitionNumber,
+      });
+      const lastResortLetter = await assignWindowsDriveLetter(
+        diskNum,
+        lastAssessment.targetPartitionNumber,
+        'OPENCORE',
+        registerProcess,
+      );
+      if (lastResortLetter) {
+        log('INFO', 'diskOps', 'Final aggressive assign succeeded', { diskNum, driveLetter: lastResortLetter });
+        return { diskNum, driveLetter: lastResortLetter };
+      }
+      throw new Error(
+        `Disk ${diskNum} has a FAT32 OPENCORE partition, but Windows did not assign a drive letter after multiple attempts (diskpart, Set-Partition, Add-PartitionAccessPath). ` +
+        'This usually means another process is holding a lock on the new volume, or a stale mount entry is blocking assignment. ' +
+        'Unplug the drive, wait 10 seconds, reconnect it, and try again. ' +
+        'If it keeps failing, open Disk Management (diskmgmt.msc) and manually assign a drive letter to partition 1.'
+      );
+    }
+
+    if (lastAssessment.stage === 'label-lookup') {
+      throw new Error(
+        `Disk ${diskNum} has a FAT32 partition with a drive letter, but the OPENCORE label could not be confirmed. ` +
+        'The app will not guess at an unlabeled volume on a destructive path. ' +
+        'Rename the new volume to OPENCORE in Disk Management, then retry.'
+      );
+    }
+
+    throw new Error(
+      lastDiskpartError
+        ? `diskpart could not prepare disk ${diskNum}. ${lastDiskpartError.message}`
+        : `diskpart could not prepare disk ${diskNum}. Close all programs using this drive, unplug and reconnect it, then try again.`
+    );
+  }
+
   async function inspectExistingEfi(device: string): Promise<ExistingEfiInspection> {
     const result = await withMountedExistingEfi(device, async ({ mountPoint }) => {
       const efiPath = path.join(mountPoint, 'EFI');
@@ -1239,6 +1514,62 @@ export function createDiskOps(log: LogFunction): DiskOps {
     if (result.kind === 'absent') return { status: 'absent', configHash: null };
     if (result.kind === 'error') return { status: 'unreadable', reason: result.reason, configHash: null };
     return result.value;
+  }
+
+  async function convertDiskToGpt(options: ConvertDiskToGptOptions): Promise<DiskInfo> {
+    if (!options.confirmed) {
+      throw new Error('SAFETY BLOCK: convertDiskToGpt requires explicit user confirmation (confirmed=true)');
+    }
+
+    const { device, onPhase, registerProcess } = options;
+    log('INFO', 'diskOps', 'Converting disk to GPT inside app', { device, platform: process.platform });
+
+    const initialInfo = await getDiskInfo(device);
+    if (initialInfo.isSystemDisk) {
+      throw new Error(`SAFETY BLOCK: ${device} is the system/boot disk — cannot erase and convert it to GPT`);
+    }
+    if (initialInfo.partitionTable === 'unknown') {
+      throw new Error(`SAFETY BLOCK: Cannot read partition table for ${device} — refusing to erase an unidentified disk`);
+    }
+    if (initialInfo.partitionTable === 'gpt') {
+      return initialInfo;
+    }
+
+    if (process.platform === 'darwin') {
+      onPhase('erase', `Unmounting ${device}`);
+      await runCmd(`diskutil unmountDisk ${device}`, registerProcess);
+      onPhase('format', `Erasing ${device} as FAT32 GPT`);
+      await runCmd(`diskutil eraseDisk FAT32 OPENCORE GPTFormat ${device}`, registerProcess);
+    } else if (process.platform === 'linux') {
+      const part = buildLinuxFirstPartitionPath(device);
+      onPhase('erase', `Unmounting mounted volumes from ${device}`);
+      await runCmd(elevateCommand(`umount ${device}* 2>/dev/null || true`), registerProcess);
+      onPhase('format', `Partitioning and formatting ${device} as GPT/FAT32`);
+      await runCmd(elevateCommand(`parted ${device} --script mklabel gpt mkpart primary fat32 1MiB 100%`), registerProcess);
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        if (fs.existsSync(part)) break;
+      }
+      if (!fs.existsSync(part)) throw new Error(`Partition ${part} did not appear after partitioning — try again`);
+      await runCmd(elevateCommand(`mkfs.fat -F 32 -n OPENCORE ${part}`), registerProcess);
+      await runCmd('sync', registerProcess).catch(() => {});
+    } else if (process.platform === 'win32') {
+      onPhase('erase', `Preparing ${device} for GPT conversion`);
+      await prepareWindowsOpenCoreVolume(
+        device,
+        (phase, detail) => onPhase(phase, detail),
+        registerProcess,
+      );
+    } else {
+      throw new Error(`convertDiskToGpt: unsupported platform ${process.platform}`);
+    }
+
+    onPhase('verify', `Verifying GPT partition table on ${device}`);
+    const refreshedInfo = await waitForGptDiskInfo(device);
+    if (refreshedInfo.partitionTable !== 'gpt') {
+      throw new Error(`GPT conversion completed, but ${device} did not report a GPT partition table afterwards`);
+    }
+    return refreshedInfo;
   }
 
   async function flashUsb(options: FlashUsbOptions): Promise<void> {
@@ -1361,228 +1692,14 @@ export function createDiskOps(log: LogFunction): DiskOps {
         }
 
       } else if (process.platform === 'win32') {
-        const diskNum = getWindowsDiskNumber(device);
-        if (!diskNum) throw new Error(`Invalid device path: ${device}`);
-        const deviceSizeBytes = await getDeviceSize(device).catch(() => 0);
-        const partitionSizeMB = getWindowsFat32PartitionSizeMB(deviceSizeBytes);
+        const { diskNum, driveLetter } = await prepareWindowsOpenCoreVolume(
+          device,
+          (phase, detail) => onPhase(phase, detail),
+          registerProcess,
+          checkAborted,
+        );
 
         try {
-          // Check if the drive is already prepared (GPT, FAT32, labeled OPENCORE)
-          let driveLetter = await getWindowsDriveLetterForLabel(diskNum, 'OPENCORE', registerProcess);
-          if (driveLetter) {
-            log('INFO', 'usb-flash', 'Found existing OPENCORE volume — reusing prepared drive', { diskNum, driveLetter });
-            onPhase('format', `Using existing OPENCORE partition on disk ${diskNum}`);
-          }
-
-          // Issue #26: large drives often arrive pre-formatted (OPENCORE FAT32, no letter).
-          // Assign a drive letter and reuse the partition instead of running diskpart.
-          if (!driveLetter) {
-            const preCheckPartitions = await getWindowsPreparedPartitions(diskNum, registerProcess);
-            const reuseCandidate = selectWindowsOpencoreReuseCandidate(preCheckPartitions);
-            if (reuseCandidate) {
-              log('INFO', 'usb-flash', 'Found OPENCORE FAT32 partition with no drive letter — assigning', {
-                diskNum,
-                partitionNumber: reuseCandidate.partitionNumber,
-                sizeBytes: reuseCandidate.sizeBytes,
-              });
-              onPhase('format', `Assigning drive letter to existing OPENCORE partition on disk ${diskNum}`);
-              const assigned = await assignWindowsDriveLetter(
-                diskNum, reuseCandidate.partitionNumber, 'OPENCORE', registerProcess,
-              );
-              if (assigned) {
-                driveLetter = assigned;
-                log('INFO', 'usb-flash', 'Reused existing OPENCORE partition', { diskNum, driveLetter });
-              }
-            }
-          }
-
-          if (!driveLetter) {
-            // Need to prepare the drive with diskpart
-            const mountedPartitions = await getMountedPartitions(device).catch(() => [] as string[]);
-            if (mountedPartitions.length > 0) {
-              onPhase('erase', `Detaching mounted volumes from disk ${diskNum}`);
-              log('WARN', 'usb-flash', 'Detaching mounted Windows volumes before flash', { diskNum, mountedPartitions });
-              await detachWindowsDriveLetters(diskNum, registerProcess);
-              await new Promise((resolve) => setTimeout(resolve, 500));
-            }
-
-            const script = buildWindowsFlashDiskpartScript(diskNum, partitionSizeMB);
-            const scriptPath = path.join(os.tmpdir(), `oc-diskpart-${crypto.randomUUID()}.txt`);
-            fs.writeFileSync(scriptPath, script);
-
-            let lastDiskpartError: Error | null = null;
-            let lastAssessment: WindowsFlashPreparationAssessment = {
-              status: 'failed',
-              stage: 'create-partition',
-              driveLetter: '',
-              targetPartitionNumber: null,
-              usedPartitionFallback: false,
-            };
-            let lastObservedPartitions: WindowsFlashPreparedPartition[] = [];
-            const maxDiskpartAttempts = 2;
-            for (let attempt = 0; attempt < maxDiskpartAttempts; attempt += 1) {
-              onPhase('format', attempt === 0
-                ? `Running diskpart on disk ${diskNum}`
-                : `Retrying disk ${diskNum} after clearing stale Windows mounts`);
-              checkAborted();
-              log('DEBUG', 'usb-flash', 'Running diskpart', { diskNum, attempt: attempt + 1 });
-              let diskpartFailed = false;
-              try {
-                await runCmd(`diskpart /s "${scriptPath}"`, registerProcess);
-                lastDiskpartError = null;
-              } catch (error) {
-                diskpartFailed = true;
-                lastDiskpartError = error as Error;
-                log('WARN', 'usb-flash', 'diskpart reported an error', {
-                  diskNum,
-                  attempt: attempt + 1,
-                  error: (error as Error).message,
-                });
-              }
-
-              lastObservedPartitions = await waitForWindowsPreparedPartitions(
-                diskNum,
-                registerProcess,
-                10,
-                500,
-              );
-              lastAssessment = assessWindowsFlashPreparationState({
-                partitions: lastObservedPartitions,
-                expectedLabel: 'OPENCORE',
-              });
-
-              if (lastAssessment.status === 'failed' && lastAssessment.stage === 'assign') {
-                const assignedLetter = await assignWindowsDriveLetter(diskNum, lastAssessment.targetPartitionNumber, 'OPENCORE', registerProcess);
-                if (assignedLetter) {
-                  lastObservedPartitions = await getWindowsPreparedPartitions(diskNum, registerProcess);
-                  lastAssessment = assessWindowsFlashPreparationState({
-                    partitions: lastObservedPartitions,
-                    expectedLabel: 'OPENCORE',
-                  });
-                }
-              }
-
-              if (lastAssessment.status === 'ready') {
-                driveLetter = lastAssessment.driveLetter;
-                if (lastAssessment.usedPartitionFallback) {
-                  log('WARN', 'usb-flash', 'Using partition-based drive letter fallback after OPENCORE label lookup failed', {
-                    diskNum,
-                    partitionNumber: lastAssessment.targetPartitionNumber,
-                    driveLetter,
-                    partitions: lastObservedPartitions,
-                  });
-                }
-                break;
-              }
-
-              if (!shouldRetryWindowsFlashPreparation({
-                attempt,
-                maxAttempts: maxDiskpartAttempts,
-                diskpartFailed,
-                driveLetter: '',
-                stage: lastAssessment.stage,
-              })) {
-                break;
-              }
-              log('WARN', 'usb-flash', 'Retrying diskpart after Windows flash preparation failure', {
-                diskNum,
-                attempt: attempt + 1,
-                stage: lastAssessment.stage,
-                partitions: lastObservedPartitions,
-              });
-              await detachWindowsDriveLetters(diskNum, registerProcess).catch(() => {});
-              await new Promise((resolve) => setTimeout(resolve, 700));
-            }
-
-            try { fs.unlinkSync(scriptPath); } catch {}
-
-            if (!driveLetter) {
-              if (lastAssessment.stage === 'create-partition') {
-                throw new Error(
-                  `diskpart failed to create a partition on disk ${diskNum}. ` +
-                  'The selected disk never produced a visible partition after the cleanup and GPT conversion steps. ' +
-                  'Close all programs using this drive, unplug and reconnect it, then try again. ' +
-                  'If it keeps failing, open an elevated Command Prompt and run: diskpart → select disk ' + diskNum + ' → clean → convert gpt → create partition primary → select partition 1 → format fs=fat32 quick label=OPENCORE → assign'
-                );
-              } else if (lastAssessment.stage === 'format') {
-                // Issue #25: diskpart format silently fails (noerr hides the exit code).
-                // Try PowerShell Format-Volume as a recovery path before giving up.
-                const partNum = lastAssessment.targetPartitionNumber ?? 1;
-                log('WARN', 'usb-flash', 'diskpart format failed — attempting Format-Volume recovery', { diskNum, partNum });
-                onPhase('format', `Recovering: formatting partition ${partNum} on disk ${diskNum}`);
-                let formatRecovered = false;
-                try {
-                  await runCmd(
-                    `powershell -NoProfile -Command "try { Format-Volume -DiskNumber ${diskNum} -PartitionNumber ${partNum} -FileSystem FAT32 -NewFileSystemLabel 'OPENCORE' -Confirm:$false -Force -ErrorAction Stop } catch { throw }"`,
-                    registerProcess,
-                  );
-                  const recoveredPartitions = await waitForWindowsPreparedPartitions(diskNum, registerProcess, 10, 500);
-                  const recoveredAssessment = assessWindowsFlashPreparationState({
-                    partitions: recoveredPartitions,
-                    expectedLabel: 'OPENCORE',
-                  });
-                  if (recoveredAssessment.status === 'ready') {
-                    driveLetter = recoveredAssessment.driveLetter;
-                    formatRecovered = true;
-                  } else if (recoveredAssessment.stage === 'assign') {
-                    const assignedLetter = await assignWindowsDriveLetter(
-                      diskNum, recoveredAssessment.targetPartitionNumber, 'OPENCORE', registerProcess,
-                    );
-                    if (assignedLetter) {
-                      driveLetter = assignedLetter;
-                      formatRecovered = true;
-                    }
-                  }
-                } catch (e) {
-                  log('WARN', 'usb-flash', 'Format-Volume recovery also failed', { diskNum, partNum, error: (e as Error).message });
-                }
-                if (!formatRecovered) {
-                  throw new Error(
-                    `diskpart created a partition on disk ${diskNum}, but failed to format it as FAT32 OPENCORE. ` +
-                    'The partition exists, but Windows did not report a FAT32 volume on it after diskpart finished. ' +
-                    'Close Explorer windows, antivirus scans, or backup tools touching this drive, then retry. ' +
-                    'If it keeps failing, format partition 1 manually as FAT32 and label it OPENCORE before retrying.'
-                  );
-                }
-              } else if (lastAssessment.stage === 'assign') {
-                // Issue #30: one final aggressive assign attempt with a longer
-                // settle window before giving up.  The partition exists and is
-                // healthy — the only missing piece is the drive letter.
-                log('WARN', 'usb-flash', 'All diskpart attempts left no drive letter — final aggressive assign', {
-                  diskNum,
-                  partitionNumber: lastAssessment.targetPartitionNumber,
-                });
-                const lastResortLetter = await assignWindowsDriveLetter(
-                  diskNum, lastAssessment.targetPartitionNumber, 'OPENCORE', registerProcess,
-                );
-                if (lastResortLetter) {
-                  driveLetter = lastResortLetter;
-                  log('INFO', 'usb-flash', 'Final aggressive assign succeeded', { diskNum, driveLetter });
-                }
-                if (!driveLetter) {
-                  throw new Error(
-                    `Disk ${diskNum} has a FAT32 OPENCORE partition, but Windows did not assign a drive letter after multiple attempts (diskpart, Set-Partition, Add-PartitionAccessPath). ` +
-                    'This usually means another process is holding a lock on the new volume, or a stale mount entry is blocking assignment. ' +
-                    'Unplug the drive, wait 10 seconds, reconnect it, and try again. ' +
-                    'If it keeps failing, open Disk Management (diskmgmt.msc) and manually assign a drive letter to partition 1.'
-                  );
-                }
-              } else if (lastAssessment.stage === 'label-lookup') {
-                throw new Error(
-                  `Disk ${diskNum} has a FAT32 partition with a drive letter, but the OPENCORE label could not be confirmed. ` +
-                  'The app will not guess at an unlabeled volume on a destructive path. ' +
-                  'Rename the new volume to OPENCORE in Disk Management, then retry.'
-                );
-              } else {
-                throw new Error(
-                  lastDiskpartError
-                    ? `diskpart could not prepare disk ${diskNum}. ${lastDiskpartError.message}`
-                    : `diskpart could not prepare disk ${diskNum}. Close all programs using this drive, unplug and reconnect it, then try again.`
-                );
-              }
-            }
-          }
-
           onPhase('copy', `Copying EFI to ${driveLetter}:`);
           checkAborted();
           log('DEBUG', 'usb-flash', 'Copying EFI', { driveLetter });
@@ -1844,6 +1961,7 @@ export function createDiskOps(log: LogFunction): DiskOps {
     inspectExistingEfi,
     copyExistingEfi,
     flashUsb,
+    convertDiskToGpt,
     shrinkPartition,
     createBootPartition,
     getHardDrives,

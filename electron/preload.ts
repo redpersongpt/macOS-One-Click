@@ -108,6 +108,7 @@ try {
     restartToBios: () => ipcRenderer.invoke('restart-to-bios'),
     disableAutostart: () => ipcRenderer.invoke('disable-autostart'),
     getHardDrives: () => ipcRenderer.invoke('get-hard-drives'),
+    convertDiskToGpt: (disk: string, confirmed: boolean) => ipcRenderer.invoke('convert-disk-to-gpt', disk, confirmed),
     shrinkPartition: (disk: string, sizeGB: number, confirmed: boolean) => ipcRenderer.invoke('shrink-partition', disk, sizeGB, confirmed),
     createBootPartition: (disk: string, efiPath: string, confirmed: boolean, profile?: object | null) => ipcRenderer.invoke('create-boot-partition', disk, efiPath, confirmed, profile ?? null),
     getDownloadResumeState: () => ipcRenderer.invoke('get-download-resume-state'),

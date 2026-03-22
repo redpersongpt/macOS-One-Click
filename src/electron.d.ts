@@ -50,6 +50,7 @@ declare global {
       restartToBios: () => Promise<{ supported: boolean; error?: string }>;
       disableAutostart: () => Promise<void>;
       getHardDrives: () => Promise<any[]>;
+      convertDiskToGpt: (disk: string, confirmed: boolean) => Promise<import('../electron/diskOps').DiskInfo>;
       shrinkPartition: (disk: string, sizeGB: number, confirmed: boolean) => Promise<void>;
       createBootPartition: (disk: string, efiPath: string, confirmed: boolean, profile?: any | null) => Promise<void>;
       getDownloadResumeState: () => Promise<any>;

@@ -2,6 +2,13 @@
 
 Project note: the app is now branded as `OpCore-OneClick`. Legacy repo/update coordinates and the persisted app-data path remain unchanged for continuity.
 
+## 2.7.4 - 2026-03-23
+
+### In-app MBR to GPT conversion
+- Added an in-app destructive conversion path for selected USB targets that are still MBR, so the app can erase them, convert them to GPT, and leave behind a FAT32 `OPENCORE` volume instead of forcing a manual shell step first.
+- Reused the same Windows GPT/FAT32 preparation logic for both direct conversion and flash preparation so the diskpart path stays consistent across both flows.
+- Tightened reuse rules so an existing `OPENCORE` volume is only reused when the disk itself already reports GPT, preventing an MBR disk from slipping through on label alone.
+
 ## 2.7.3 - 2026-03-23
 
 ### Updater install / relaunch fix

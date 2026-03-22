@@ -148,6 +148,7 @@ declare global {
       restartToBios: () => Promise<{ supported: boolean; error?: string }>;
       disableAutostart: () => Promise<void>;
       getHardDrives: () => Promise<{ name: string; device: string; size: string; type: string }[]>;
+      convertDiskToGpt: (disk: string, confirmed: boolean) => Promise<RendererDiskInfo>;
       shrinkPartition: (disk: string, sizeGB: number, confirmed: boolean) => Promise<void>;
       createBootPartition: (disk: string, efiPath: string, confirmed: boolean, profile?: import('../electron/configGenerator').HardwareProfile | null) => Promise<void>;
       getDownloadResumeState: () => Promise<{ offset: number; dmgDest: string; clDest: string | null; efiPath: string; targetOS: string } | null>;
@@ -288,6 +289,7 @@ export default function App() {
   const selectedUsbRef = useRef<string | null>(null);
   const [diskInfo, setDiskInfo] = useState<RendererDiskInfo | null>(null);
   const [showDiskWarning, setShowDiskWarning] = useState(false);
+  const [diskWarningBusy, setDiskWarningBusy] = useState(false);
   const [showUnknownPartitionWarning, setShowUnknownPartitionWarning] = useState(false);
   const [showFlashConfirm, setShowFlashConfirm] = useState(false);
   const [showPartitionConfirm, setShowPartitionConfirm] = useState(false);
@@ -906,6 +908,35 @@ export default function App() {
     setFlashConfirmText('');
     setFlashChecks(new Set());
     setFlashConfirmBusy(false);
+  };
+
+  const convertSelectedDiskToGpt = async () => {
+    const targetDevice = diskInfo?.device ?? selectedUsbRef.current ?? selectedUsb;
+    if (!targetDevice || diskWarningBusy) return;
+    setDiskWarningBusy(true);
+    setGlobalNotice(null);
+    try {
+      const convertedInfo = await window.electron.convertDiskToGpt(targetDevice, true);
+      if (selectedUsbRef.current !== targetDevice) {
+        selectedUsbRef.current = targetDevice;
+        setSelectedUsb(targetDevice);
+      }
+      setDiskInfoIfCurrent(targetDevice, convertedInfo);
+      setEfiBackupPolicy(null);
+      clearFlashConfirmationState();
+      setShowDiskWarning(false);
+      await loadUsbTargets(() => window.electron.listUsbDevices());
+      setGlobalNotice(
+        `${targetDevice} was erased and converted to GPT with a FAT32 OPENCORE volume. Review the drive details, then retry flashing.`,
+      );
+    } catch (error: any) {
+      setErrorWithSuggestion(
+        error?.message || 'Failed to erase and convert the selected drive to GPT.',
+        'usb-select',
+      );
+    } finally {
+      setDiskWarningBusy(false);
+    }
   };
 
   const clearSelectedUsbState = () => {
@@ -3676,6 +3707,7 @@ export default function App() {
                   Flashing to an MBR disk will fail or corrupt the partition table.
                 </p>
                 <p>Convert the disk to GPT first, then retry. <span className="text-amber-400">This will erase all data on the drive.</span></p>
+                <p>The app can erase this selected USB and convert it to GPT for you, or you can run the manual commands below.</p>
               </div>
               <div className="bg-white/4 border border-white/8 rounded-2xl p-4 space-y-3 text-xs font-mono mb-6">
                 <div>
@@ -3695,9 +3727,17 @@ export default function App() {
               <div className="flex gap-3">
                 <button
                   onClick={() => { setShowDiskWarning(false); setDiskInfo(null); }}
-                  className="flex-1 py-3 rounded-xl bg-white/5 border border-white/10 text-white/50 text-sm font-medium hover:bg-white/8 transition-all cursor-pointer"
+                  disabled={diskWarningBusy}
+                  className="flex-1 py-3 rounded-xl bg-white/5 border border-white/10 text-white/50 text-sm font-medium hover:bg-white/8 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Cancel — Select a Different Drive
+                </button>
+                <button
+                  onClick={() => { void convertSelectedDiskToGpt(); }}
+                  disabled={diskWarningBusy}
+                  className="flex-1 py-3 rounded-xl bg-red-600 text-white text-sm font-bold hover:bg-red-500 transition-all cursor-pointer shadow-lg shadow-red-600/20 disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none"
+                >
+                  {diskWarningBusy ? 'Converting…' : 'Erase And Convert To GPT'}
                 </button>
               </div>
             </motion.div>

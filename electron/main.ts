@@ -3486,6 +3486,37 @@ app.whenReady().then(async () => {
 
   // Local Partitioning
   ipcHandle('get-hard-drives',   () => withTimeout(diskOps.getHardDrives(), 30_000, 'getHardDrives'));
+  ipcHandle('convert-disk-to-gpt', async (_e: Electron.IpcMainInvokeEvent, device: string, confirmed?: boolean) => {
+    if (!confirmed) throw new Error('Disk conversion requires explicit user confirmation');
+    const info = await diskOps.getDiskInfo(device);
+    if (info.isSystemDisk) {
+      throw new Error(`SAFETY BLOCK: ${device} is the system boot disk — cannot erase and convert it to GPT`);
+    }
+    if (info.partitionTable === 'unknown') {
+      throw new Error(`SAFETY BLOCK: Cannot read partition table for ${device} — refusing to erase an unidentified disk`);
+    }
+    if (info.partitionTable === 'gpt') {
+      return info;
+    }
+    const token = registry.create('partition-prep');
+    try {
+      const converted = await diskOps.convertDiskToGpt({
+        device,
+        confirmed,
+        onPhase: (phase, detail) => {
+          registry.updateProgress(token.taskId, { kind: 'partition-prep', phase, detail });
+        },
+        registerProcess: (p) => token.registerProcess(p),
+      });
+      registry.complete(token.taskId);
+      return converted;
+    } catch (e) {
+      const classified = classifyError(e);
+      if (!token.aborted) registry.fail(token.taskId, classified.message);
+      else registry.cancel(token.taskId);
+      throw createClassifiedIpcError(classified, e);
+    }
+  });
   ipcHandle('shrink-partition', async (_e: Electron.IpcMainInvokeEvent, disk: string, size: number, confirmed?: boolean) => {
     if (!confirmed) throw new Error('Partition shrink requires explicit user confirmation');
     // Safety: block system disk and verify partition table before destructive op
