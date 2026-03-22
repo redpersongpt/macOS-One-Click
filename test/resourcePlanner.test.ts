@@ -86,14 +86,25 @@ describe('buildResourcePlan — source class correctness', () => {
     expect(liluEntry!.sourceClass).toBe('downloaded');
   });
 
-  it('kexts with embedded source are classified as bundled', () => {
+  it('kexts with embedded source are classified as embedded (not bundled)', () => {
     const plan = buildResourcePlan({
       profile: fakeProfile(),
       kextRegistry: KEXT_REGISTRY,
       kextSources: { 'Lilu.kext': 'embedded' },
     });
     const liluEntry = plan.resources.find(r => r.name === 'Lilu.kext');
-    expect(liluEntry!.sourceClass).toBe('bundled');
+    expect(liluEntry!.sourceClass).toBe('embedded');
+  });
+
+  it('embedded kext source string names the upstream repo', () => {
+    const plan = buildResourcePlan({
+      profile: fakeProfile(),
+      kextRegistry: KEXT_REGISTRY,
+      kextSources: { 'Lilu.kext': 'embedded' },
+    });
+    const liluEntry = plan.resources.find(r => r.name === 'Lilu.kext');
+    expect(liluEntry!.source).toContain('Embedded');
+    expect(liluEntry!.source).toContain('acidanthera/Lilu');
   });
 
   it('kexts with github source are classified as downloaded', () => {

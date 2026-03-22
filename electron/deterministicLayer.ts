@@ -550,7 +550,7 @@ export function verifyBuildState(efiPath: string | null, requiredKexts: string[]
 
 // ─── Phase 4: Hard Success Contracts ────────────────────────────────────────
 
-export function verifyEfiBuildSuccess(efiPath: string, requiredKexts: string[]): SuccessContract {
+export function verifyEfiBuildSuccess(efiPath: string, requiredKexts: string[], requiredSsdts?: string[]): SuccessContract {
   const checks: { name: string; passed: boolean; detail: string }[] = [];
 
   // Check 1: OpenCore.efi exists and is > 100KB
@@ -631,6 +631,24 @@ export function verifyEfiBuildSuccess(efiPath: string, requiredKexts: string[]):
   // Check 5: No nested EFI structure
   const nestedOk = !fs.existsSync(path.join(efiPath, 'EFI/EFI'));
   checks.push({ name: 'Structure integrity', passed: nestedOk, detail: nestedOk ? 'Clean' : 'Nested EFI/EFI detected' });
+
+  // Check 6: ACPI directory exists (SSDTs cannot be loaded without it)
+  const acpiDir = path.join(efiPath, 'EFI/OC/ACPI');
+  const acpiOk = fs.existsSync(acpiDir) && fs.statSync(acpiDir).isDirectory();
+  checks.push({ name: 'ACPI directory', passed: acpiOk, detail: acpiOk ? 'Present' : 'Missing — SSDTs cannot be loaded by OpenCore' });
+
+  // Check 7: Required SSDTs present (when caller provides the list)
+  if (requiredSsdts && requiredSsdts.length > 0) {
+    const missingSsdts = requiredSsdts.filter(s => !fs.existsSync(path.join(acpiDir, s)));
+    const ssdtsOk = missingSsdts.length === 0;
+    checks.push({
+      name: 'Required SSDTs',
+      passed: ssdtsOk,
+      detail: ssdtsOk
+        ? `All ${requiredSsdts.length} required SSDTs present`
+        : `Missing from EFI/OC/ACPI: ${missingSsdts.join(', ')}`,
+    });
+  }
 
   const allPassed = checks.every(c => c.passed);
 

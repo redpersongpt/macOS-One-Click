@@ -470,10 +470,15 @@ export function getRequiredResources(profile: HardwareProfile) {
                 pushSsdt('SSDT-PMC.aml');
             }
         } else if (['Haswell', 'Broadwell'].includes(profile.generation)) {
+            // Source: config.plist/haswell.html — USBX not needed on pre-Skylake
             pushSsdt('SSDT-PLUG.aml');
             pushSsdt('SSDT-EC.aml');
+        } else if (['Skylake', 'Kaby Lake'].includes(profile.generation)) {
+            // Source: config.plist/kaby.html — USBX required for USB power management on 6th/7th gen
+            pushSsdt('SSDT-PLUG.aml');
+            pushSsdt('SSDT-EC-USBX.aml');
         } else {
-            // Sandy Bridge, Ivy Bridge, Skylake, Kaby Lake
+            // Sandy Bridge, Ivy Bridge, Penryn — legacy EC path, no USBX
             pushSsdt('SSDT-PLUG.aml');
             pushSsdt('SSDT-EC.aml');
         }

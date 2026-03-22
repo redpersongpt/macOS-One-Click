@@ -416,14 +416,30 @@ describe('getRequiredResources — SSDT selection matrix', () => {
     expect(r.ssdts).toEqual(expect.arrayContaining(['SSDT-PLUG.aml', 'SSDT-EC.aml']));
   });
 
-  it('Skylake uses SSDT-PLUG + SSDT-EC', () => {
+  it('Skylake uses SSDT-PLUG + SSDT-EC-USBX (USB power management required on 6th gen)', () => {
     const r = getRequiredResources(fakeProfile({ generation: 'Skylake' }));
-    expect(r.ssdts).toEqual(expect.arrayContaining(['SSDT-PLUG.aml', 'SSDT-EC.aml']));
+    expect(r.ssdts).toContain('SSDT-PLUG.aml');
+    expect(r.ssdts).toContain('SSDT-EC-USBX.aml');
+    expect(r.ssdts).not.toContain('SSDT-EC.aml');
   });
 
-  it('Kaby Lake uses SSDT-PLUG + SSDT-EC', () => {
+  it('Kaby Lake uses SSDT-PLUG + SSDT-EC-USBX (USB power management required on 7th gen)', () => {
     const r = getRequiredResources(fakeProfile({ generation: 'Kaby Lake' }));
-    expect(r.ssdts).toEqual(expect.arrayContaining(['SSDT-PLUG.aml', 'SSDT-EC.aml']));
+    expect(r.ssdts).toContain('SSDT-PLUG.aml');
+    expect(r.ssdts).toContain('SSDT-EC-USBX.aml');
+    expect(r.ssdts).not.toContain('SSDT-EC.aml');
+  });
+
+  it('Sandy Bridge uses legacy SSDT-EC (no USBX, older controller)', () => {
+    const r = getRequiredResources(fakeProfile({ generation: 'Sandy Bridge' }));
+    expect(r.ssdts).toContain('SSDT-EC.aml');
+    expect(r.ssdts).not.toContain('SSDT-EC-USBX.aml');
+  });
+
+  it('Ivy Bridge uses legacy SSDT-EC (no USBX, older controller)', () => {
+    const r = getRequiredResources(fakeProfile({ generation: 'Ivy Bridge' }));
+    expect(r.ssdts).toContain('SSDT-EC.aml');
+    expect(r.ssdts).not.toContain('SSDT-EC-USBX.aml');
   });
 
   it('Coffee Lake Z390 includes SSDT-PMC', () => {

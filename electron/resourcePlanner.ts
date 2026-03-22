@@ -4,7 +4,7 @@ import type { KextRegistryEntry } from './kextSourcePolicy.js';
 import { getSsdtSourcePolicy } from './ssdtSourcePolicy.js';
 
 export type ResourcePlanKind = 'kext' | 'ssdt' | 'driver' | 'payload';
-export type ResourcePlanSourceClass = 'bundled' | 'generated' | 'downloaded' | 'manual';
+export type ResourcePlanSourceClass = 'bundled' | 'embedded' | 'generated' | 'downloaded' | 'manual';
 export type ResourcePlanValidationOutcome = 'verified' | 'warning' | 'blocked' | 'pending_manual';
 
 export interface ResourcePlanEntry {
@@ -47,7 +47,7 @@ export function buildResourcePlan(input: {
     const registryEntry = input.kextRegistry[kext];
     const fetchedSource = input.kextSources?.[kext];
     const sourceClass: ResourcePlanSourceClass = fetchedSource === 'embedded'
-      ? 'bundled'
+      ? 'embedded'
       : fetchedSource === 'github' || fetchedSource === 'direct'
       ? 'downloaded'
       : registryEntry
@@ -60,7 +60,9 @@ export function buildResourcePlan(input: {
     resources.push({
       name: kext,
       kind: 'kext',
-      source: registryEntry?.directUrl
+      source: fetchedSource === 'embedded'
+        ? `Embedded app fallback — ${registryEntry?.repo ?? 'bundled'}`
+        : registryEntry?.directUrl
         ? registryEntry.directUrl
         : registryEntry
         ? `https://github.com/${registryEntry.repo}/releases/latest`

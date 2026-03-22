@@ -319,6 +319,7 @@ export async function validateEfi(
   const requiredDirs = [
     { rel: 'EFI/OC/Drivers', label: 'Drivers directory' },
     { rel: 'EFI/OC/Kexts',  label: 'Kexts directory' },
+    { rel: 'EFI/OC/ACPI',   label: 'ACPI directory' },
   ];
 
   for (const { rel, label } of requiredDirs) {
