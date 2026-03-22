@@ -25,16 +25,22 @@ function fakeMatrix(): CompatibilityMatrix {
       {
         versionId: 'ventura-13',
         versionName: 'macOS Ventura',
+        icon: '🏔',
+        numeric: 13,
         status: 'supported',
         reason: 'Best first build for this hardware.',
         recommended: true,
+        reportLevel: 'supported',
       },
       {
         versionId: 'sonoma-14',
         versionName: 'macOS Sonoma',
+        icon: '🌊',
+        numeric: 14,
         status: 'experimental',
         reason: 'Community-proven with extra tuning.',
         recommended: false,
+        reportLevel: 'experimental',
       },
     ],
   };

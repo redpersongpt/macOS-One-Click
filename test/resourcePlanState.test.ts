@@ -29,7 +29,7 @@ function fakePlan(count = 2): ResourcePlan {
       source: 'https://example.com',
       expectedIdentityOrVersion: '1.0.0',
       validationOutcome: 'verified' as const,
-      sourceClass: 'github' as const,
+      sourceClass: 'downloaded' as const,
     })),
   };
 }

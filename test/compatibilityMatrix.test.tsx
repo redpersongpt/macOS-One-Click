@@ -8,9 +8,12 @@ function makeRow(overrides: Partial<CompatibilityMatrixRow> = {}): Compatibility
   return {
     versionId: 'ventura-13',
     versionName: 'macOS Ventura',
+    icon: '🏔',
+    numeric: 13,
     status: 'supported',
     reason: 'Best first build for this hardware.',
     recommended: false,
+    reportLevel: 'supported',
     ...overrides,
   };
 }
