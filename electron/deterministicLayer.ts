@@ -69,6 +69,37 @@ export interface StateVerification {
   missingKexts: string[];
 }
 
+// ─── Build Input Contract ────────────────────────────────────────────────────
+
+export interface BuildInputContractResult {
+  valid: boolean;
+  violations: string[];
+}
+
+/**
+ * Validates that a hardware profile has all the fields required to produce
+ * a deterministic EFI build.  Call BEFORE starting any build or dry-run.
+ */
+export function validateBuildInputContract(profile: {
+  architecture?: string;
+  generation?: string;
+  targetOS?: string;
+  smbios?: string;
+  motherboard?: string;
+  coreCount?: number;
+}): BuildInputContractResult {
+  const violations: string[] = [];
+  if (!profile.architecture) violations.push('architecture is required');
+  if (!profile.generation) violations.push('generation is required');
+  if (!profile.targetOS) violations.push('targetOS is required');
+  if (!profile.smbios) violations.push('smbios is required');
+  if (!profile.motherboard) violations.push('motherboard is required');
+  if (profile.architecture === 'AMD' && (!profile.coreCount || profile.coreCount < 1)) {
+    violations.push('AMD profiles require coreCount ≥ 1');
+  }
+  return { valid: violations.length === 0, violations };
+}
+
 // ─── HTTP Verification Helpers ──────────────────────────────────────────────
 
 function verifyUrl(url: string, timeoutMs = 10000): Promise<{ reachable: boolean; httpCode: number; contentLength: number; error?: string }> {

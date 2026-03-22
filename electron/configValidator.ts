@@ -360,6 +360,23 @@ export async function validateEfi(
             'Missing required plist XML structure',
             'Missing <plist>, </plist>, or <dict> structure',
           ));
+        } else {
+          // Verify required OpenCore config sections exist
+          const requiredSections = ['ACPI', 'Booter', 'DeviceProperties', 'Kernel', 'Misc', 'NVRAM', 'PlatformInfo', 'UEFI'];
+          const missingSections = requiredSections.filter(section => {
+            const keyTag = `<key>${section}</key>`;
+            return !plistContent.includes(keyTag);
+          });
+          if (missingSections.length > 0) {
+            issues.push(blocked(
+              'PLIST_SECTIONS_MISSING',
+              `config.plist is missing required OpenCore sections: ${missingSections.join(', ')}`,
+              'config.plist',
+              'EFI/OC/config.plist',
+              `Missing top-level config sections: ${missingSections.join(', ')}`,
+              `Required: ${requiredSections.join(', ')}`,
+            ));
+          }
         }
       }
     } catch (e) {

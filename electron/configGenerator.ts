@@ -414,18 +414,13 @@ export function getRequiredResources(profile: HardwareProfile) {
     }
 
     // AMD-specific kexts — Source: AMD/zen.html
+    // GPU kexts already handled in architecture block above; no duplicate push needed.
     if (profile.architecture === 'AMD') {
         if (profile.generation === 'Ryzen' || profile.generation === 'Threadripper') {
             pushUnique('AMDRyzenCPUPowerManagement.kext');
         }
         if (osVer >= 12) {
             pushUnique('AppleMCEReporterDisabler.kext');
-        }
-        if (gpuAssessments.some(gpu => gpu.requiresNootRX)) {
-            pushUnique('NootRX.kext');
-        }
-        if (gpuAssessments.some(gpu => gpu.requiresNootedRed)) {
-            pushUnique('NootedRed.kext');
         }
     }
 
@@ -552,14 +547,17 @@ export function generateConfigPlist(profile: HardwareProfile): string {
     }
 
     // Intel iGPU Device Properties
+    // Alder Lake / Raptor Lake / Rocket Lake use MacPro7,1 (discrete GPU) — no iGPU driver
+    // in macOS, so we skip iGPU properties entirely for these generations.
     let gpuProperties = '';
-    if (profile.architecture === 'Intel') {
+    if (profile.architecture === 'Intel' &&
+        !['Alder Lake', 'Raptor Lake', 'Rocket Lake'].includes(profile.generation)) {
         let platformId = 'BwCbPg=='; // Coffee Lake default
         if (profile.generation === 'Haswell') platformId = 'AwAiDQ==';
-        if (profile.generation === 'Broadwell') platformId = 'BgAiDQ==';
-        if (profile.generation === 'Skylake') platformId = 'ASbPaA==';
-        if (profile.generation === 'Kaby Lake') platformId = 'AAASWQ==';
-        if (profile.generation === 'Comet Lake') platformId = 'AwCbPg==';
+        else if (profile.generation === 'Broadwell') platformId = 'BgAiDQ==';
+        else if (profile.generation === 'Skylake') platformId = 'ASbPaA==';
+        else if (profile.generation === 'Kaby Lake') platformId = 'AAASWQ==';
+        else if (profile.generation === 'Comet Lake') platformId = 'AwCbPg==';
 
         gpuProperties = `
             <key>PciRoot(0x0)/Pci(0x2,0x0)</key>

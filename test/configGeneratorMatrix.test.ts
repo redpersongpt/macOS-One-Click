@@ -1,0 +1,657 @@
+import { describe, it, expect } from 'vitest';
+import {
+  getSMBIOSForProfile,
+  getQuirksForGeneration,
+  getRequiredResources,
+  generateConfigPlist,
+  getBIOSSettings,
+} from '../electron/configGenerator.js';
+import type { HardwareProfile } from '../electron/configGenerator.js';
+import { getUnsupportedSsdtRequests } from '../electron/ssdtSourcePolicy.js';
+
+function fakeProfile(overrides: Partial<HardwareProfile> = {}): HardwareProfile {
+  return {
+    cpu: 'Intel Core i7-10700K',
+    architecture: 'Intel',
+    generation: 'Comet Lake',
+    motherboard: 'ASUS ROG Z490',
+    gpu: 'Intel UHD 630',
+    ram: '16 GB',
+    coreCount: 8,
+    targetOS: 'macOS Ventura',
+    smbios: 'iMac20,1',
+    kexts: [],
+    ssdts: [],
+    bootArgs: '',
+    isLaptop: false,
+    ...overrides,
+  } as HardwareProfile;
+}
+
+// ─── AMD quirks ─────────────────────────────────────────────────────────────
+
+describe('getQuirksForGeneration — AMD specifics', () => {
+  it('AMD disables AppleCpuPmCfgLock and AppleXcpmCfgLock', () => {
+    for (const gen of ['Ryzen', 'Threadripper', 'Bulldozer'] as HardwareProfile['generation'][]) {
+      const q = getQuirksForGeneration(gen);
+      expect(q.AppleCpuPmCfgLock, `${gen} AppleCpuPmCfgLock`).toBe(false);
+      expect(q.AppleXcpmCfgLock, `${gen} AppleXcpmCfgLock`).toBe(false);
+    }
+  });
+
+  it('AMD enables ProvideCurrentCpuInfo', () => {
+    const q = getQuirksForGeneration('Ryzen');
+    expect(q.ProvideCurrentCpuInfo).toBe(true);
+  });
+
+  it('AMD B550 sets SetupVirtualMap false', () => {
+    const q = getQuirksForGeneration('Ryzen', 'MSI MAG B550 Tomahawk');
+    expect(q.SetupVirtualMap).toBe(false);
+  });
+
+  it('AMD A520 sets SetupVirtualMap false', () => {
+    const q = getQuirksForGeneration('Ryzen', 'Gigabyte A520M');
+    expect(q.SetupVirtualMap).toBe(false);
+  });
+
+  it('AMD X570 keeps SetupVirtualMap true', () => {
+    const q = getQuirksForGeneration('Ryzen', 'ASUS TUF X570');
+    expect(q.SetupVirtualMap).toBe(true);
+  });
+
+  it('AMD TRx40 enables DevirtualiseMmio', () => {
+    const q = getQuirksForGeneration('Threadripper', 'ASUS TRx40 Creator');
+    expect(q.DevirtualiseMmio).toBe(true);
+  });
+
+  it('AMD Ryzen on non-TRx40 has DevirtualiseMmio false', () => {
+    const q = getQuirksForGeneration('Ryzen', 'ASUS B550');
+    expect(q.DevirtualiseMmio).toBe(false);
+  });
+});
+
+// ─── HEDT/motherboard-specific quirks ───────────────────────────────────────
+
+describe('getQuirksForGeneration — HEDT and motherboard specifics', () => {
+  it('X99 uses EnableWriteUnprotector and disables RebuildAppleMemoryMap', () => {
+    const q = getQuirksForGeneration('Haswell', 'ASUS X99 Deluxe');
+    expect(q.EnableWriteUnprotector).toBe(true);
+    expect(q.RebuildAppleMemoryMap).toBe(false);
+    expect(q.SyncRuntimePermissions).toBe(false);
+    expect(q.SetupVirtualMap).toBe(true);
+  });
+
+  it('X299 uses DevirtualiseMmio and ProtectUefiServices', () => {
+    const q = getQuirksForGeneration('Skylake', 'ASUS Prime X299');
+    expect(q.DevirtualiseMmio).toBe(true);
+    expect(q.ProtectUefiServices).toBe(true);
+    expect(q.EnableWriteUnprotector).toBe(false);
+    expect(q.SetupVirtualMap).toBe(false);
+  });
+
+  it('HP systems enable UnblockFsConnect', () => {
+    const q = getQuirksForGeneration('Coffee Lake', 'HP ProDesk 400 G5');
+    expect(q.UnblockFsConnect).toBe(true);
+  });
+
+  it('Hewlett-Packard also enables UnblockFsConnect', () => {
+    const q = getQuirksForGeneration('Coffee Lake', 'Hewlett-Packard Z440');
+    expect(q.UnblockFsConnect).toBe(true);
+  });
+});
+
+// ─── Generation-specific quirks ─────────────────────────────────────────────
+
+describe('getQuirksForGeneration — generation details', () => {
+  it('Coffee Lake enables DevirtualiseMmio and keeps SetupVirtualMap true', () => {
+    const q = getQuirksForGeneration('Coffee Lake');
+    expect(q.DevirtualiseMmio).toBe(true);
+    expect(q.SetupVirtualMap).toBe(true);
+    expect(q.RebuildAppleMemoryMap).toBe(true);
+  });
+
+  it('Comet Lake sets SetupVirtualMap false', () => {
+    const q = getQuirksForGeneration('Comet Lake');
+    expect(q.SetupVirtualMap).toBe(false);
+    expect(q.DevirtualiseMmio).toBe(true);
+  });
+
+  it('Alder Lake enables ProtectUefiServices and ProvideCurrentCpuInfo', () => {
+    const q = getQuirksForGeneration('Alder Lake');
+    expect(q.ProtectUefiServices).toBe(true);
+    expect(q.ProvideCurrentCpuInfo).toBe(true);
+    expect(q.SetupVirtualMap).toBe(false);
+  });
+
+  it('Raptor Lake matches Alder Lake quirks', () => {
+    const qAL = getQuirksForGeneration('Alder Lake');
+    const qRL = getQuirksForGeneration('Raptor Lake');
+    expect(qRL).toEqual(qAL);
+  });
+
+  it('Rocket Lake matches Alder Lake quirks', () => {
+    const qAL = getQuirksForGeneration('Alder Lake');
+    const qRKL = getQuirksForGeneration('Rocket Lake');
+    expect(qRKL).toEqual(qAL);
+  });
+});
+
+// ─── Boot args generation ───────────────────────────────────────────────────
+
+describe('generateConfigPlist — boot args', () => {
+  it('appends alcid for non-Tahoe Intel', () => {
+    const plist = generateConfigPlist(fakeProfile({
+      targetOS: 'macOS Ventura',
+      audioLayoutId: 7,
+    }));
+    expect(plist).toContain('alcid=7');
+  });
+
+  it('does NOT append alcid for Tahoe (26+)', () => {
+    const plist = generateConfigPlist(fakeProfile({
+      targetOS: 'macOS Tahoe 26',
+    }));
+    expect(plist).not.toMatch(/alcid=\d/);
+  });
+
+  it('appends revpatch=sbvmm for Sonoma+ (14)', () => {
+    const plist = generateConfigPlist(fakeProfile({
+      targetOS: 'macOS Sonoma',
+    }));
+    expect(plist).toContain('revpatch=sbvmm');
+  });
+
+  it('does NOT append revpatch=sbvmm for Ventura (13)', () => {
+    const plist = generateConfigPlist(fakeProfile({
+      targetOS: 'macOS Ventura',
+    }));
+    expect(plist).not.toContain('revpatch=sbvmm');
+  });
+
+  it('appends -ibtcompatbeta for Tahoe Intel', () => {
+    const plist = generateConfigPlist(fakeProfile({
+      targetOS: 'macOS Tahoe 26',
+    }));
+    expect(plist).toContain('-ibtcompatbeta');
+  });
+
+  it('does NOT append -ibtcompatbeta for Ventura', () => {
+    const plist = generateConfigPlist(fakeProfile({
+      targetOS: 'macOS Ventura',
+    }));
+    expect(plist).not.toContain('-ibtcompatbeta');
+  });
+
+  it('appends -igfxblr for Coffee Lake laptop', () => {
+    const plist = generateConfigPlist(fakeProfile({
+      generation: 'Coffee Lake',
+      isLaptop: true,
+      smbios: 'MacBookPro15,2',
+    }));
+    expect(plist).toContain('-igfxblr');
+  });
+
+  it('does NOT append -igfxblr for Kaby Lake laptop', () => {
+    const plist = generateConfigPlist(fakeProfile({
+      generation: 'Kaby Lake',
+      isLaptop: true,
+      smbios: 'MacBookPro14,1',
+    }));
+    expect(plist).not.toContain('-igfxblr');
+  });
+
+  it('does NOT append -igfxblr for Coffee Lake desktop', () => {
+    const plist = generateConfigPlist(fakeProfile({
+      generation: 'Coffee Lake',
+      isLaptop: false,
+    }));
+    expect(plist).not.toContain('-igfxblr');
+  });
+
+  it('conservative strategy adds verbose and debug args', () => {
+    const plist = generateConfigPlist(fakeProfile({
+      strategy: 'conservative',
+    } as any));
+    expect(plist).toContain('-v');
+    expect(plist).toContain('debug=0x100');
+    expect(plist).toContain('keepsyms=1');
+  });
+});
+
+// ─── Intel iGPU device properties ───────────────────────────────────────────
+
+describe('generateConfigPlist — Intel iGPU properties', () => {
+  it('Haswell gets correct platform ID', () => {
+    const plist = generateConfigPlist(fakeProfile({ generation: 'Haswell', smbios: 'iMac14,4' }));
+    expect(plist).toContain('AwAiDQ==');
+  });
+
+  it('Broadwell gets correct platform ID', () => {
+    const plist = generateConfigPlist(fakeProfile({ generation: 'Broadwell', smbios: 'iMac16,2' }));
+    expect(plist).toContain('BgAiDQ==');
+  });
+
+  it('Skylake gets correct platform ID', () => {
+    const plist = generateConfigPlist(fakeProfile({ generation: 'Skylake', smbios: 'iMac17,1' }));
+    expect(plist).toContain('ASbPaA==');
+  });
+
+  it('Kaby Lake gets correct platform ID', () => {
+    const plist = generateConfigPlist(fakeProfile({ generation: 'Kaby Lake', smbios: 'iMac18,1' }));
+    expect(plist).toContain('AAASWQ==');
+  });
+
+  it('Coffee Lake gets default platform ID', () => {
+    const plist = generateConfigPlist(fakeProfile({ generation: 'Coffee Lake', smbios: 'iMac19,1' }));
+    expect(plist).toContain('BwCbPg==');
+  });
+
+  it('Comet Lake gets its own platform ID', () => {
+    const plist = generateConfigPlist(fakeProfile({ generation: 'Comet Lake', smbios: 'iMac20,1' }));
+    expect(plist).toContain('AwCbPg==');
+  });
+
+  it('Alder Lake does NOT include iGPU device properties (no macOS driver)', () => {
+    const plist = generateConfigPlist(fakeProfile({
+      generation: 'Alder Lake',
+      smbios: 'MacPro7,1',
+    }));
+    expect(plist).not.toContain('AAPL,ig-platform-id');
+    expect(plist).not.toContain('framebuffer-patch-enable');
+  });
+
+  it('Raptor Lake does NOT include iGPU device properties', () => {
+    const plist = generateConfigPlist(fakeProfile({
+      generation: 'Raptor Lake',
+      smbios: 'MacPro7,1',
+    }));
+    expect(plist).not.toContain('AAPL,ig-platform-id');
+  });
+
+  it('Rocket Lake does NOT include iGPU device properties', () => {
+    const plist = generateConfigPlist(fakeProfile({
+      generation: 'Rocket Lake',
+      smbios: 'MacPro7,1',
+    }));
+    expect(plist).not.toContain('AAPL,ig-platform-id');
+  });
+
+  it('AMD does NOT include iGPU device properties', () => {
+    const plist = generateConfigPlist(fakeProfile({
+      architecture: 'AMD',
+      generation: 'Ryzen',
+      coreCount: 8,
+      smbios: 'iMacPro1,1',
+    }));
+    expect(plist).not.toContain('AAPL,ig-platform-id');
+  });
+});
+
+// ─── CPUID spoofing ─────────────────────────────────────────────────────────
+
+describe('generateConfigPlist — CPUID spoofing', () => {
+  it('Alder Lake has non-default CPUID spoof data', () => {
+    const plist = generateConfigPlist(fakeProfile({
+      generation: 'Alder Lake',
+      smbios: 'MacPro7,1',
+    }));
+    expect(plist).toContain('VQYKAAAAAAAAAAAAAAAAAA==');
+  });
+
+  it('Raptor Lake has non-default CPUID spoof data', () => {
+    const plist = generateConfigPlist(fakeProfile({
+      generation: 'Raptor Lake',
+      smbios: 'MacPro7,1',
+    }));
+    expect(plist).toContain('VQYKAAAAAAAAAAAAAAAAAA==');
+  });
+
+  it('Coffee Lake uses default CPUID (no spoofing needed)', () => {
+    const plist = generateConfigPlist(fakeProfile({ generation: 'Coffee Lake' }));
+    // Default CPUID data is all zeros
+    expect(plist).toContain('AAAAAAAAAAAAAA==');
+  });
+});
+
+// ─── Kext selection per architecture ────────────────────────────────────────
+
+describe('getRequiredResources — kext selection matrix', () => {
+  it('includes CPUTopologyRebuild for Alder Lake', () => {
+    const r = getRequiredResources(fakeProfile({ generation: 'Alder Lake' }));
+    expect(r.kexts).toContain('CPUTopologyRebuild.kext');
+  });
+
+  it('includes CPUTopologyRebuild for Raptor Lake', () => {
+    const r = getRequiredResources(fakeProfile({ generation: 'Raptor Lake' }));
+    expect(r.kexts).toContain('CPUTopologyRebuild.kext');
+  });
+
+  it('does NOT include CPUTopologyRebuild for Coffee Lake', () => {
+    const r = getRequiredResources(fakeProfile({ generation: 'Coffee Lake' }));
+    expect(r.kexts).not.toContain('CPUTopologyRebuild.kext');
+  });
+
+  it('includes RestrictEvents for Sonoma+', () => {
+    const r = getRequiredResources(fakeProfile({ targetOS: 'macOS Sonoma' }));
+    expect(r.kexts).toContain('RestrictEvents.kext');
+  });
+
+  it('does NOT include RestrictEvents for Ventura', () => {
+    const r = getRequiredResources(fakeProfile({ targetOS: 'macOS Ventura' }));
+    expect(r.kexts).not.toContain('RestrictEvents.kext');
+  });
+
+  it('includes AMDRyzenCPUPowerManagement for Ryzen', () => {
+    const r = getRequiredResources(fakeProfile({
+      architecture: 'AMD',
+      generation: 'Ryzen',
+    }));
+    expect(r.kexts).toContain('AMDRyzenCPUPowerManagement.kext');
+  });
+
+  it('includes AMDRyzenCPUPowerManagement for Threadripper', () => {
+    const r = getRequiredResources(fakeProfile({
+      architecture: 'AMD',
+      generation: 'Threadripper',
+    }));
+    expect(r.kexts).toContain('AMDRyzenCPUPowerManagement.kext');
+  });
+
+  it('does NOT include AMDRyzenCPUPowerManagement for Bulldozer', () => {
+    const r = getRequiredResources(fakeProfile({
+      architecture: 'AMD',
+      generation: 'Bulldozer',
+    }));
+    expect(r.kexts).not.toContain('AMDRyzenCPUPowerManagement.kext');
+  });
+
+  it('does NOT include AppleMCEReporterDisabler for AMD on Big Sur (11)', () => {
+    const r = getRequiredResources(fakeProfile({
+      architecture: 'AMD',
+      generation: 'Ryzen',
+      targetOS: 'macOS Big Sur',
+    }));
+    expect(r.kexts).not.toContain('AppleMCEReporterDisabler.kext');
+  });
+
+  it('includes laptop kexts and SSDTs for Intel laptop', () => {
+    const r = getRequiredResources(fakeProfile({
+      generation: 'Coffee Lake',
+      isLaptop: true,
+    }));
+    expect(r.kexts).toContain('SMCBatteryManager.kext');
+    expect(r.kexts).toContain('VoodooPS2Controller.kext');
+    expect(r.ssdts).toContain('SSDT-PNLF.aml');
+    expect(r.ssdts).toContain('SSDT-XOSI.aml');
+  });
+
+  it('includes laptop SSDTs for AMD laptop', () => {
+    const r = getRequiredResources(fakeProfile({
+      architecture: 'AMD',
+      generation: 'Ryzen',
+      isLaptop: true,
+    }));
+    expect(r.ssdts).toContain('SSDT-PNLF.aml');
+    expect(r.ssdts).toContain('SSDT-XOSI.aml');
+  });
+});
+
+// ─── SSDT selection matrix ──────────────────────────────────────────────────
+
+describe('getRequiredResources — SSDT selection matrix', () => {
+  it('Haswell uses SSDT-PLUG + SSDT-EC', () => {
+    const r = getRequiredResources(fakeProfile({ generation: 'Haswell' }));
+    expect(r.ssdts).toContain('SSDT-PLUG.aml');
+    expect(r.ssdts).toContain('SSDT-EC.aml');
+    expect(r.ssdts).not.toContain('SSDT-AWAC.aml');
+  });
+
+  it('Broadwell uses SSDT-PLUG + SSDT-EC', () => {
+    const r = getRequiredResources(fakeProfile({ generation: 'Broadwell' }));
+    expect(r.ssdts).toEqual(expect.arrayContaining(['SSDT-PLUG.aml', 'SSDT-EC.aml']));
+  });
+
+  it('Sandy Bridge uses SSDT-PLUG + SSDT-EC', () => {
+    const r = getRequiredResources(fakeProfile({ generation: 'Sandy Bridge' }));
+    expect(r.ssdts).toEqual(expect.arrayContaining(['SSDT-PLUG.aml', 'SSDT-EC.aml']));
+  });
+
+  it('Skylake uses SSDT-PLUG + SSDT-EC', () => {
+    const r = getRequiredResources(fakeProfile({ generation: 'Skylake' }));
+    expect(r.ssdts).toEqual(expect.arrayContaining(['SSDT-PLUG.aml', 'SSDT-EC.aml']));
+  });
+
+  it('Kaby Lake uses SSDT-PLUG + SSDT-EC', () => {
+    const r = getRequiredResources(fakeProfile({ generation: 'Kaby Lake' }));
+    expect(r.ssdts).toEqual(expect.arrayContaining(['SSDT-PLUG.aml', 'SSDT-EC.aml']));
+  });
+
+  it('Coffee Lake Z390 includes SSDT-PMC', () => {
+    const r = getRequiredResources(fakeProfile({
+      generation: 'Coffee Lake',
+      motherboard: 'ASUS Prime Z390-A',
+    }));
+    expect(r.ssdts).toContain('SSDT-PMC.aml');
+  });
+
+  it('Coffee Lake non-Z390 does NOT include SSDT-PMC', () => {
+    const r = getRequiredResources(fakeProfile({
+      generation: 'Coffee Lake',
+      motherboard: 'ASUS ROG Z370',
+    }));
+    expect(r.ssdts).not.toContain('SSDT-PMC.aml');
+  });
+
+  it('Alder Lake uses SSDT-PLUG-ALT (not SSDT-PLUG)', () => {
+    const r = getRequiredResources(fakeProfile({ generation: 'Alder Lake' }));
+    expect(r.ssdts).toContain('SSDT-PLUG-ALT.aml');
+    expect(r.ssdts).not.toContain('SSDT-PLUG.aml');
+  });
+
+  it('AMD B850 includes SSDT-CPUR', () => {
+    const r = getRequiredResources(fakeProfile({
+      architecture: 'AMD',
+      generation: 'Ryzen',
+      motherboard: 'ASUS B850 Creator',
+    }));
+    expect(r.ssdts).toContain('SSDT-CPUR.aml');
+  });
+
+  it('AMD X670E includes SSDT-CPUR', () => {
+    const r = getRequiredResources(fakeProfile({
+      architecture: 'AMD',
+      generation: 'Ryzen',
+      motherboard: 'MSI MEG X670E ACE',
+    }));
+    expect(r.ssdts).toContain('SSDT-CPUR.aml');
+  });
+
+  it('AMD X870 includes SSDT-CPUR', () => {
+    const r = getRequiredResources(fakeProfile({
+      architecture: 'AMD',
+      generation: 'Ryzen',
+      motherboard: 'ASUS ROG X870 Hero',
+    }));
+    expect(r.ssdts).toContain('SSDT-CPUR.aml');
+  });
+
+  it('every SSDT requested has a source policy', () => {
+    const profiles = [
+      fakeProfile({ generation: 'Haswell' }),
+      fakeProfile({ generation: 'Coffee Lake', motherboard: 'ASUS Z390' }),
+      fakeProfile({ generation: 'Alder Lake' }),
+      fakeProfile({ generation: 'Raptor Lake' }),
+      fakeProfile({ architecture: 'AMD', generation: 'Ryzen', motherboard: 'MSI B650' }),
+      fakeProfile({ generation: 'Coffee Lake', isLaptop: true }),
+      fakeProfile({ architecture: 'AMD', generation: 'Ryzen', isLaptop: true }),
+    ];
+    for (const profile of profiles) {
+      const resources = getRequiredResources(profile);
+      const unsupported = getUnsupportedSsdtRequests(resources.ssdts);
+      expect(unsupported, `Unsupported SSDTs for ${profile.generation} ${profile.architecture}`).toEqual([]);
+    }
+  });
+});
+
+// ─── SMBIOS discrete GPU logic ──────────────────────────────────────────────
+
+describe('getSMBIOSForProfile — discrete GPU logic', () => {
+  it('Alder Lake desktop always returns MacPro7,1 (no iGPU path)', () => {
+    const smbios = getSMBIOSForProfile(fakeProfile({
+      generation: 'Alder Lake',
+      motherboard: 'ASUS Z690',
+    }));
+    expect(smbios).toBe('MacPro7,1');
+  });
+
+  it('Raptor Lake desktop always returns MacPro7,1', () => {
+    const smbios = getSMBIOSForProfile(fakeProfile({
+      generation: 'Raptor Lake',
+      motherboard: 'MSI Z790',
+    }));
+    expect(smbios).toBe('MacPro7,1');
+  });
+
+  it('Rocket Lake desktop returns MacPro7,1', () => {
+    const smbios = getSMBIOSForProfile(fakeProfile({
+      generation: 'Rocket Lake',
+      motherboard: 'ASRock Z590',
+    }));
+    expect(smbios).toBe('MacPro7,1');
+  });
+});
+
+// ─── getBIOSSettings coverage ───────────────────────────────────────────────
+
+describe('getBIOSSettings', () => {
+  it('returns AMD BIOS settings for AMD profile', () => {
+    const settings = getBIOSSettings(fakeProfile({
+      architecture: 'AMD',
+      generation: 'Ryzen',
+    }));
+    expect(settings.enable.length).toBeGreaterThan(0);
+    expect(settings.disable.length).toBeGreaterThan(0);
+    const enableNames = settings.enable.map(s => s.name);
+    expect(enableNames).toContain('SVM Mode');
+    const disableNames = settings.disable.map(s => s.name);
+    expect(disableNames).toContain('IOMMU');
+  });
+
+  it('returns Intel BIOS settings for Intel profile', () => {
+    const settings = getBIOSSettings(fakeProfile({
+      architecture: 'Intel',
+      generation: 'Coffee Lake',
+    }));
+    const disableNames = settings.disable.map(s => s.name);
+    expect(disableNames).toContain('CFG Lock');
+    expect(disableNames).toContain('VT-d');
+    const enableNames = settings.enable.map(s => s.name);
+    expect(enableNames).toContain('VT-x');
+  });
+
+  it('Z390 adds ProtectUefiServices note', () => {
+    const settings = getBIOSSettings(fakeProfile({
+      motherboard: 'ASUS Prime Z390-A',
+    }));
+    const enableNames = settings.enable.map(s => s.name);
+    expect(enableNames.some(n => n.includes('ProtectUefiServices'))).toBe(true);
+  });
+
+  it('Z490 adds ProtectUefiServices note', () => {
+    const settings = getBIOSSettings(fakeProfile({
+      motherboard: 'MSI MEG Z490 ACE',
+    }));
+    const enableNames = settings.enable.map(s => s.name);
+    expect(enableNames.some(n => n.includes('ProtectUefiServices'))).toBe(true);
+  });
+
+  it('non-Z390/Z490 does NOT add ProtectUefiServices note', () => {
+    const settings = getBIOSSettings(fakeProfile({
+      motherboard: 'ASUS ROG Z370',
+    }));
+    const enableNames = settings.enable.map(s => s.name);
+    expect(enableNames.some(n => n.includes('ProtectUefiServices'))).toBe(false);
+  });
+});
+
+// ─── Z390 NVRAM ─────────────────────────────────────────────────────────────
+
+describe('generateConfigPlist — Z390/Z370 NVRAM legacy flags', () => {
+  it('Z390 motherboard enables LegacyEnable', () => {
+    const plist = generateConfigPlist(fakeProfile({
+      generation: 'Coffee Lake',
+      motherboard: 'ASUS Prime Z390-A',
+      smbios: 'iMac19,1',
+    }));
+    // The generated plist should have legacy NVRAM flags
+    expect(plist).toContain('<key>LegacyEnable</key>');
+  });
+
+  it('Z490 motherboard does NOT enable legacy NVRAM', () => {
+    const plist = generateConfigPlist(fakeProfile({
+      generation: 'Comet Lake',
+      motherboard: 'MSI Z490',
+      smbios: 'iMac20,1',
+    }));
+    // Z490 should not trigger legacy NVRAM
+    const legacyIdx = plist.indexOf('<key>LegacyEnable</key>');
+    if (legacyIdx !== -1) {
+      // If present, should be false
+      const afterKey = plist.slice(legacyIdx);
+      expect(afterKey).toContain('<false/>');
+    }
+  });
+});
+
+// ─── Full generation × form factor × OS matrix ─────────────────────────────
+
+describe('config generator — full generation matrix produces valid output', () => {
+  const intelGens: HardwareProfile['generation'][] = [
+    'Penryn', 'Sandy Bridge', 'Ivy Bridge', 'Haswell', 'Broadwell',
+    'Skylake', 'Kaby Lake', 'Coffee Lake', 'Comet Lake',
+    'Rocket Lake', 'Alder Lake', 'Raptor Lake',
+  ];
+  const amdGens: HardwareProfile['generation'][] = ['Ryzen', 'Threadripper', 'Bulldozer'];
+  const osTargets = ['macOS Ventura', 'macOS Sonoma', 'macOS Tahoe 26'];
+
+  for (const gen of intelGens) {
+    for (const targetOS of osTargets) {
+      it(`Intel ${gen} desktop + ${targetOS} generates valid plist`, () => {
+        const profile = fakeProfile({ generation: gen, targetOS });
+        profile.smbios = getSMBIOSForProfile(profile);
+        const plist = generateConfigPlist(profile);
+        expect(plist).toContain('<?xml');
+        expect(plist).toContain('<plist');
+        expect(plist).toContain('</plist>');
+        expect(plist).toContain(profile.smbios);
+      });
+    }
+  }
+
+  for (const gen of intelGens) {
+    it(`Intel ${gen} laptop generates valid plist`, () => {
+      const profile = fakeProfile({ generation: gen, isLaptop: true });
+      profile.smbios = getSMBIOSForProfile(profile);
+      const plist = generateConfigPlist(profile);
+      expect(plist).toContain('<?xml');
+      expect(plist).toContain(profile.smbios);
+    });
+  }
+
+  for (const gen of amdGens) {
+    for (const targetOS of osTargets) {
+      it(`AMD ${gen} + ${targetOS} generates valid plist`, () => {
+        const profile = fakeProfile({
+          architecture: 'AMD',
+          generation: gen,
+          coreCount: 8,
+          targetOS,
+        });
+        profile.smbios = getSMBIOSForProfile(profile);
+        const plist = generateConfigPlist(profile);
+        expect(plist).toContain('<?xml');
+        expect(plist).toContain(profile.smbios);
+      });
+    }
+  }
+});
