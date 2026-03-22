@@ -103,8 +103,8 @@ jobs:
             echo "No release artifacts found."
             exit 1
           fi
+          gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes 2>/dev/null || true
           gh release create "$tag" "${files[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --title "$tag" \
-            --latest \
-            --clobber
+            --latest
