@@ -1377,13 +1377,20 @@ async function createEfiStructure(
       if (!fs.existsSync(cachedSupplementalPath) || fs.statSync(cachedSupplementalPath).size === 0) {
         fs.mkdirSync(supplementalDir, { recursive: true });
         onPhase?.('Fetching supplemental ACPI tables…', policy.supplementalDownload.fileName);
-        await downloadFileWithProgress(
-          policy.supplementalDownload.url,
-          cachedSupplementalPath,
-          () => {},
-          0,
-          () => token?.check(),
-        );
+        try {
+          await downloadFileWithProgress(
+            policy.supplementalDownload.url,
+            cachedSupplementalPath,
+            () => {},
+            0,
+            () => token?.check(),
+          );
+        } catch (dlErr) {
+          log('ERROR', 'efi', `Failed to download supplemental SSDT: ${s}`, {
+            url: policy.supplementalDownload.url,
+            error: dlErr instanceof Error ? dlErr.message : String(dlErr),
+          });
+        }
       }
       if (fs.existsSync(cachedSupplementalPath) && fs.statSync(cachedSupplementalPath).size > 0) {
         fs.copyFileSync(cachedSupplementalPath, destPath);

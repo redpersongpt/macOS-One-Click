@@ -256,12 +256,30 @@ function checkKextAvailability(
     }, (res) => {
       if (res.statusCode === 403 || res.statusCode === 429) {
         res.resume();
-        resolve({ name: kextName, repo: entry.repo, available: false, error: 'GitHub rate limited' });
+        const resolution = resolveKextSourcePlan(kextName, entry, { error: 'GitHub rate limited' });
+        resolve({
+          name: kextName,
+          repo: entry.repo,
+          available: resolution.available,
+          version: resolution.version ?? undefined,
+          assetUrl: resolution.assetUrl ?? undefined,
+          error: resolution.available ? undefined : resolution.message,
+          source: resolution.route,
+        });
         return;
       }
       if (res.statusCode !== 200) {
         res.resume();
-        resolve({ name: kextName, repo: entry.repo, available: false, error: `HTTP ${res.statusCode}` });
+        const resolution = resolveKextSourcePlan(kextName, entry, { error: `HTTP ${res.statusCode}` });
+        resolve({
+          name: kextName,
+          repo: entry.repo,
+          available: resolution.available,
+          version: resolution.version ?? undefined,
+          assetUrl: resolution.assetUrl ?? undefined,
+          error: resolution.available ? undefined : resolution.message,
+          source: resolution.route,
+        });
         return;
       }
       let data = '';
