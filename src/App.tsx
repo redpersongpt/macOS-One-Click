@@ -2882,7 +2882,7 @@ export default function App() {
                       setErrorWithSuggestion(
                         platform === 'win32'
                           ? 'Please run the app as Administrator to continue. Right-click the .exe and select "Run as administrator".'
-                          : 'Please run the app with sudo to continue: sudo ./macOS-One-Click'
+                          : 'Disk operations require privilege elevation. Install polkit (sudo apt install policykit-1) so the app can prompt for your password when needed. Do not run the entire app as root.'
                       );
                       return;
                     }

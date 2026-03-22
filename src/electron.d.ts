@@ -75,6 +75,7 @@ declare global {
       runPrechecks: () => Promise<{
         platform: string;
         adminPrivileges: boolean;
+        adminNote: string | null;
         freeSpaceMB: number;
         networkOk: boolean;
         usbDetected: boolean;

@@ -55,11 +55,11 @@ export const REMEDIATION_GUIDE: Record<RemediationCode, Remediation> = {
       'Reconnect the drive and click Refresh. If the problem persists, reformat the drive as GPT using Disk Utility (macOS), GParted (Linux), or diskpart (Windows), then try again.',
   },
   NO_ADMIN: {
-    shortLabel: 'Administrator privileges required',
+    shortLabel: 'Privilege elevation required',
     explanation:
-      'Writing to disks requires administrator access. The app does not currently have the necessary permissions.',
+      'Writing to disks requires elevated access. The app does not currently have the necessary permissions.',
     howToFix:
-      'On Windows, right-click the application and choose "Run as administrator". On Linux/macOS, re-run the app with elevated permissions (sudo).',
+      'On Windows, right-click the application and choose "Run as administrator". On Linux, install polkit (sudo apt install policykit-1) — the app will prompt for your password per operation. Do not run the whole app as root.',
   },
   FIRMWARE_UNVERIFIED: {
     shortLabel: 'BIOS settings unverified',

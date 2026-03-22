@@ -1,14 +1,18 @@
 {
   "name": "macos-one-click",
   "private": true,
-  "version": "2.4.7",
+  "version": "2.5.0",
   "description": "macOS One-Click Deployment Utility",
   "author": "macOS-One-Click contributors",
   "main": "dist-electron/electron/main.js",
+  "bin": {
+    "macos-oneclick": "dist-electron/electron/cli.js"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && tsc -p electron/tsconfig.json && vite build",
+    "cli": "tsc -p electron/tsconfig.json && node dist-electron/electron/cli.js",
     "package:linux": "npm run build && electron-builder --linux AppImage deb --publish never",
     "package:win": "npm run build && electron-builder --win nsis --publish never",
     "package:release": "npm run build && electron-builder --linux AppImage deb --win nsis --publish never",
@@ -59,9 +63,7 @@
       "category": "System",
       "maintainer": "macOS-One-Click contributors",
       "vendor": "redpersongpt",
-      "executableArgs": [
-        "--no-sandbox"
-      ]
+      "executableArgs": []
     },
     "deb": {
       "depends": [

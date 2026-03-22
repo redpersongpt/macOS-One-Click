@@ -195,8 +195,8 @@ const ERROR_MAP: Array<{
       title: 'Permission denied',
       what: 'The app does not have permission to write to this drive.',
       nextStep:
-        'On Windows, close the app and re-run it as Administrator. On Linux/macOS, re-run with sudo.',
-      retryable: false,
+        'On Windows, close the app and re-run it as Administrator. On Linux, install polkit (policykit-1) so the app can elevate disk commands. On macOS, approve the system prompt.',
+      retryable: true,
     },
   },
   {

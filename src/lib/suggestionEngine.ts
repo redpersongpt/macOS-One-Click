@@ -877,12 +877,12 @@ const TEMPLATES: SuggestionTemplate[] = [
               'The operation proceeds after you authenticate in the system dialog',
             )
           : act(
-              'Re-launch the app with: sudo ./macOS-One-Click',
+              'Install polkit: sudo apt install policykit-1 — the app will prompt for your password when disk access is needed',
               'high',
-              'Linux requires root for /dev/sdX block device access — there is no GUI elevation prompt',
+              'Linux uses per-operation elevation via pkexec — do not run the entire app as root',
               'fix_now',
-              'Linux blocks all unprivileged access to block devices',
-              'Running as root grants the required /dev access for the flash operation',
+              'pkexec provides a graphical password prompt for individual disk commands',
+              'Disk operations proceed after you authenticate in the pkexec dialog',
             ),
       alternatives: [],
     }),

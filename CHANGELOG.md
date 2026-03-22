@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.5.0 - 2026-03-22
+
+### Linux privilege model rewrite (#18)
+- The app no longer tells Linux users to run the entire GUI as root. Disk operations now use pkexec (polkit) for per-command elevation, the same model macOS uses with system prompts.
+- Removed `--no-sandbox` from default Linux executable args. The auto no-sandbox workaround is kept only for backwards compatibility when already running as root.
+- Updated all privilege-related error messages, suggestions, and remediations to say "install polkit" instead of "run with sudo."
+
+### CLI support (#14)
+- Added a headless CLI entry point (`macos-oneclick` / `node dist-electron/electron/cli.js`).
+- Commands: `scan`, `compatible`, `report`, `matrix`, `version`.
+- JSON (`--json`) and human-readable output. Correct exit codes (0=ok, 1=error/blocked, 2=usage).
+- `--target` flag for specifying macOS version on `compatible` and `report` commands.
+- Read-only — destructive operations (flash/build) require the GUI.
+
+### Architecture cleanup
+- Extracted `detectCpuGeneration`, `detectArchitecture`, `mapDetectedToProfile` from main.ts into `electron/hardwareMapper.ts` so both the Electron app and CLI share the same mapping logic.
+
 ## 2.4.7 - 2026-03-22
 
 ### Windows flash and GPT detection fix (#15, #16, #17)

@@ -4,6 +4,7 @@ import os from 'os';
 import util from 'util';
 import crypto from 'node:crypto';
 import { exec } from 'child_process';
+import { elevateCommand } from './linuxElevate.js';
 
 const execPromise = util.promisify(exec);
 
@@ -1017,23 +1018,23 @@ export function createDiskOps(log: LogFunction): DiskOps {
         onPhase('format', `Partitioning and formatting ${device}`);
         checkAborted();
         log('DEBUG', 'usb-flash', 'Partitioning and formatting', { device, part });
-        await runCmd(`umount ${device}* 2>/dev/null || true`, registerProcess);
-        await runCmd(`parted ${device} --script mklabel gpt mkpart primary fat32 1MiB 100%`, registerProcess);
+        await runCmd(elevateCommand(`umount ${device}* 2>/dev/null || true`), registerProcess);
+        await runCmd(elevateCommand(`parted ${device} --script mklabel gpt mkpart primary fat32 1MiB 100%`), registerProcess);
 
         for (let i = 0; i < 10; i++) {
           await new Promise(r => setTimeout(r, 400));
           if (fs.existsSync(part)) break;
         }
         if (!fs.existsSync(part)) throw new Error(`Partition ${part} did not appear after partitioning — try again`);
-        await runCmd(`mkfs.fat -F 32 -n OPENCORE ${part}`, registerProcess);
+        await runCmd(elevateCommand(`mkfs.fat -F 32 -n OPENCORE ${part}`), registerProcess);
 
         fs.mkdirSync(tmpMount, { recursive: true });
         onPhase('copy', `Copying EFI to ${tmpMount}`);
         checkAborted();
         try {
-          await runCmd(`mount ${part} ${tmpMount}`, registerProcess);
+          await runCmd(elevateCommand(`mount ${part} ${tmpMount}`), registerProcess);
           log('DEBUG', 'usb-flash', 'Copying EFI to USB', { tmpMount });
-          await runCmd(`cp -r "${path.join(efiPath, 'EFI')}" "${tmpMount}/"`, registerProcess);
+          await runCmd(elevateCommand(`cp -r "${path.join(efiPath, 'EFI')}" "${tmpMount}/"`), registerProcess);
 
           // Copy recovery payload if present
           const recoveryDir = path.join(efiPath, 'com.apple.recovery.boot');
@@ -1041,7 +1042,7 @@ export function createDiskOps(log: LogFunction): DiskOps {
             onPhase('copy', `Copying recovery payload to ${tmpMount}`);
             checkAborted();
             log('DEBUG', 'usb-flash', 'Copying recovery payload', { tmpMount });
-            await runCmd(`cp -r "${recoveryDir}" "${tmpMount}/"`, registerProcess);
+            await runCmd(elevateCommand(`cp -r "${recoveryDir}" "${tmpMount}/"`), registerProcess);
           }
 
           await runCmd('sync', registerProcess);
@@ -1056,7 +1057,7 @@ export function createDiskOps(log: LogFunction): DiskOps {
           }
         } finally {
           onPhase('eject', `Unmounting ${tmpMount}`);
-          try { await runCmd(`umount ${tmpMount}`, registerProcess); log('DEBUG', 'usb-flash', 'Unmounted'); } catch (_) {}
+          try { await runCmd(elevateCommand(`umount ${tmpMount}`), registerProcess); log('DEBUG', 'usb-flash', 'Unmounted'); } catch (_) {}
           try { fs.rmdirSync(tmpMount); } catch (_) {}
         }
 
