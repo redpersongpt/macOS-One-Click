@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.6 - 2026-03-22
+
+### Codeless kext validation fix (#13)
+- Fixed EFI build failing on codeless kexts like AppleMCEReporterDisabler that have only an Info.plist and no binary in Contents/MacOS. Both the build validator and the install validator now recognize codeless kexts as valid.
+
 ## 2.4.5 - 2026-03-22
 
 ### UI layout and polish (#10)

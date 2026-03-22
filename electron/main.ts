@@ -414,10 +414,12 @@ function installEmbeddedKext(kextName: string, targetDir: string): { name: strin
 function validateInstalledKext(kextName: string, targetDir: string): boolean {
   const kextPath = path.join(targetDir, kextName);
   if (!fs.existsSync(kextPath)) return false;
-  if (!fs.existsSync(path.join(kextPath, 'Contents', 'MacOS'))) return false;
-  // Size sanity: Contents/MacOS should have at least one file > 1KB
+  // Codeless kexts (e.g. AppleMCEReporterDisabler) have Info.plist but no Contents/MacOS
+  const infoPlist = path.join(kextPath, 'Contents', 'Info.plist');
+  const macosDir = path.join(kextPath, 'Contents', 'MacOS');
+  if (!fs.existsSync(macosDir)) return fs.existsSync(infoPlist);
+  // Binary kexts: Contents/MacOS should have at least one file > 1KB
   try {
-    const macosDir = path.join(kextPath, 'Contents', 'MacOS');
     const files = fs.readdirSync(macosDir);
     return files.some(f => fs.statSync(path.join(macosDir, f)).size > 1024);
   } catch { return false; }

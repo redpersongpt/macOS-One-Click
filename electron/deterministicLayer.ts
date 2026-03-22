@@ -557,7 +557,7 @@ export function verifyEfiBuildSuccess(efiPath: string, requiredKexts: string[]):
     checks.push({ name: 'config.plist', passed: false, detail: 'File not found or unreadable' });
   }
 
-  // Check 4: All required kexts present with valid binaries
+  // Check 4: All required kexts present with valid binaries (or valid codeless kexts)
   const kextsDir = path.join(efiPath, 'EFI/OC/Kexts');
   const missingKexts: string[] = [];
   const stubKexts: string[] = [];
@@ -565,7 +565,12 @@ export function verifyEfiBuildSuccess(efiPath: string, requiredKexts: string[]):
     const kextPath = path.join(kextsDir, k);
     if (!fs.existsSync(kextPath)) { missingKexts.push(k); continue; }
     const macosDir = path.join(kextPath, 'Contents', 'MacOS');
-    if (!fs.existsSync(macosDir)) { stubKexts.push(k); continue; }
+    if (!fs.existsSync(macosDir)) {
+      // Codeless kexts (e.g. AppleMCEReporterDisabler) have Info.plist but no binary
+      const hasInfoPlist = fs.existsSync(path.join(kextPath, 'Contents', 'Info.plist'));
+      if (!hasInfoPlist) stubKexts.push(k);
+      continue;
+    }
     try {
       const files = fs.readdirSync(macosDir);
       const hasBinary = files.some(f => fs.statSync(path.join(macosDir, f)).size > 1024);
