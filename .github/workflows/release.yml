@@ -106,4 +106,5 @@ jobs:
           gh release create "$tag" "${files[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --title "$tag" \
-            --latest
+            --latest \
+            --clobber
