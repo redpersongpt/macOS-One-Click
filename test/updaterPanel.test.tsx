@@ -89,6 +89,19 @@ describe('UpdaterPanel – action visibility across states', () => {
     expect(screen.getByText('Restart to finish updating')).toBeInTheDocument();
   });
 
+  it('installing: shows applying state instead of falling back to up-to-date', () => {
+    render(
+      <UpdaterPanel
+        state={baseState({ installing: true, latestVersion: '2.7.3' })}
+        onRefresh={noop}
+        onPrimaryAction={noop}
+        onOpenRelease={noop}
+      />,
+    );
+    expect(screen.getAllByText('Applying update…').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('2.7.3 is being handed off to the installer.')).toBeInTheDocument();
+  });
+
   it('error state: shows error message and Release link', () => {
     render(
       <UpdaterPanel

@@ -21,6 +21,9 @@ function buildPrimaryAction(state: AppUpdateState | null): {
   disabled: boolean;
   icon: 'restart' | 'download' | 'none';
 } {
+  if (state?.installing) {
+    return { label: 'Applying update…', icon: 'restart', disabled: true };
+  }
   if (state?.restartRequired) {
     return { label: 'Restart to update', icon: 'restart', disabled: false };
   }
@@ -49,12 +52,14 @@ export default function UpdaterPanel({
 }: UpdaterPanelProps) {
   const progressPercent = state?.totalBytes && state.totalBytes > 0
     ? Math.min(100, Math.round((state.downloadedBytes / state.totalBytes) * 100))
-    : state?.readyToInstall || state?.restartRequired ? 100 : 0;
+    : state?.readyToInstall || state?.restartRequired || state?.installing ? 100 : 0;
 
-  const showProgress = !!(state?.downloading || state?.readyToInstall || state?.restartRequired);
+  const showProgress = !!(state?.downloading || state?.readyToInstall || state?.restartRequired || state?.installing);
   const refreshBusy = !!(state?.checking || state?.downloading || state?.installing);
 
-  const headline = state?.restartRequired
+  const headline = state?.installing
+    ? 'Applying update…'
+    : state?.restartRequired
     ? 'Restart to finish updating'
     : state?.checking
     ? 'Checking for updates…'
@@ -66,7 +71,9 @@ export default function UpdaterPanel({
     ? `${state.latestVersion ?? 'Update'} available`
     : 'Up to date';
 
-  const detail = state?.restartRequired
+  const detail = state?.installing
+    ? `${state.latestVersion ?? 'Update'} is being handed off to the installer.`
+    : state?.restartRequired
     ? `${state.latestVersion ?? 'Update'} is staged and ready.`
     : state?.error
     ? state.error
@@ -75,7 +82,7 @@ export default function UpdaterPanel({
     : `v${state?.currentVersion ?? '?'}`;
 
   const primaryAction = buildPrimaryAction(state);
-  const showPrimary = !!(state?.available || state?.readyToInstall || state?.restartRequired);
+  const showPrimary = !!(state?.available || state?.readyToInstall || state?.restartRequired || state?.installing);
   const checkedAt = formatRefreshTimestamp(state?.lastCheckedAt);
 
   return (
@@ -86,7 +93,7 @@ export default function UpdaterPanel({
           <div className="flex items-center gap-2">
             {state?.checking ? (
               <Loader2 className="h-3.5 w-3.5 flex-shrink-0 animate-spin text-blue-300" />
-            ) : state?.restartRequired ? (
+            ) : state?.installing || state?.restartRequired ? (
               <RotateCw className="h-3.5 w-3.5 flex-shrink-0 text-emerald-400" />
             ) : showProgress ? (
               <Download className="h-3.5 w-3.5 flex-shrink-0 text-blue-300" />

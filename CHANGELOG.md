@@ -2,6 +2,14 @@
 
 Project note: the app is now branded as `OpCore-OneClick`. Legacy repo/update coordinates and the persisted app-data path remain unchanged for continuity.
 
+## 2.7.3 - 2026-03-23
+
+### Updater install / relaunch fix
+- Downloaded updates now persist as a real staged updater session instead of living only in memory, so reopening the app no longer drops back into a fake “download again” loop.
+- Windows installer handoff now records the pending install, closes the app only after a valid detached worker is launched, and relaunches the app after a successful silent install.
+- Startup reconciliation now distinguishes applied, failed, interrupted, stale, and already-installed update states and restores the correct updater UI instead of falling back to a generic idle/download state.
+- The updater panel now shows an explicit “Applying update…” state while install handoff is in progress.
+
 ## 2.7.2 - 2026-03-23
 
 ### Windows flash error-surface fix

@@ -3029,14 +3029,16 @@ export default function App() {
                     className="mt-3 flex w-full min-w-0 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-xs font-semibold text-white/65 transition-colors hover:bg-white/[0.08] hover:text-white cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <span className="flex min-w-0 flex-1 items-center gap-2">
-                      {appUpdateState?.checking || (!appUpdateState?.restartRequired && !appUpdateState?.readyToInstall && !appUpdateState?.available) ? (
+                      {appUpdateState?.checking || (!appUpdateState?.installing && !appUpdateState?.restartRequired && !appUpdateState?.readyToInstall && !appUpdateState?.available) ? (
                         <RefreshCcw className={`w-3.5 h-3.5 flex-shrink-0 text-white/40 ${appUpdateState?.checking ? 'animate-spin' : ''}`} />
                       ) : (
                         <Download className="w-3.5 h-3.5 flex-shrink-0 text-white/40" />
                       )}
                       <span className="min-w-0 flex-1">
                         <span className="block break-words leading-snug">
-                          {appUpdateState?.restartRequired
+                          {appUpdateState?.installing
+                            ? 'Applying downloaded update'
+                            : appUpdateState?.restartRequired
                             ? 'Restart to finish update'
                             : appUpdateState?.readyToInstall
                             ? 'Install downloaded update'
@@ -3049,6 +3051,8 @@ export default function App() {
                         <span className="mt-0.5 block text-[10px] font-medium text-white/35">
                           {appUpdateState?.checking
                             ? 'Checking the latest release now'
+                            : appUpdateState?.installing
+                            ? 'Handing off to the installer and closing the app'
                             : appUpdateState?.latestVersion && appUpdateState.available
                             ? `${appUpdateState.latestVersion} is available`
                             : appUpdateState?.lastCheckedAt
@@ -3057,7 +3061,7 @@ export default function App() {
                         </span>
                       </span>
                     </span>
-                    {appUpdateState?.restartRequired || appUpdateState?.available || appUpdateState?.readyToInstall ? (
+                    {appUpdateState?.installing || appUpdateState?.restartRequired || appUpdateState?.available || appUpdateState?.readyToInstall ? (
                       <Download className="w-3.5 h-3.5 flex-shrink-0 text-white/30" />
                     ) : (
                       <RefreshCcw className={`w-3.5 h-3.5 flex-shrink-0 text-white/30 ${appUpdateState?.checking ? 'animate-spin' : ''}`} />

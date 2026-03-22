@@ -82,11 +82,16 @@ import { inferLaptopFormFactor } from './formFactor.js';
 import { generateFolderManifest, verifyFolderIntegrity } from './resourceIntegrity.js';
 import {
   compareReleaseVersions,
+  createBaseAppUpdateState,
+  createPersistedAppUpdateSession,
   isInstallerResidueEntryName,
   normalizeReleaseVersion,
   pickReleaseAssetForPlatform,
+  reconcilePersistedAppUpdateState,
+  type AppUpdateResultMarker,
   type AppUpdateState,
   type LatestReleaseInfo,
+  type PersistedAppUpdateSession,
   type ReleaseAssetInfo,
 } from './appUpdater.js';
 import {
@@ -483,13 +488,7 @@ function getCurrentCompatibilityReport(): ReturnType<typeof checkCompatibility> 
 
 const REPO_RELEASE_API_PATH = `/repos/${REPO_SLUG}/releases/latest`;
 const APP_UPDATE_RESULT_FILE = path.resolve(app.getPath('userData'), 'app-update-result.json');
-
-interface AppUpdateResultMarker {
-  status: 'success' | 'failed';
-  version: string;
-  completedAt: string;
-  message: string | null;
-}
+const APP_UPDATE_SESSION_FILE = path.resolve(app.getPath('userData'), 'app-update-session.json');
 
 function readAppUpdateResultMarker(): AppUpdateResultMarker | null {
   if (!fs.existsSync(APP_UPDATE_RESULT_FILE)) return null;
@@ -506,6 +505,28 @@ function consumeAppUpdateResultMarker(): AppUpdateResultMarker | null {
   if (!marker) return null;
   try { fs.rmSync(APP_UPDATE_RESULT_FILE, { force: true }); } catch {}
   return marker;
+}
+
+function clearAppUpdateResultMarker(): void {
+  try { fs.rmSync(APP_UPDATE_RESULT_FILE, { force: true }); } catch {}
+}
+
+function readPersistedAppUpdateSession(): PersistedAppUpdateSession | null {
+  if (!fs.existsSync(APP_UPDATE_SESSION_FILE)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(APP_UPDATE_SESSION_FILE, 'utf8')) as PersistedAppUpdateSession;
+  } catch {
+    try { fs.rmSync(APP_UPDATE_SESSION_FILE, { force: true }); } catch {}
+    return null;
+  }
+}
+
+function writePersistedAppUpdateSession(session: PersistedAppUpdateSession): void {
+  fs.writeFileSync(APP_UPDATE_SESSION_FILE, JSON.stringify(session), 'utf8');
+}
+
+function clearPersistedAppUpdateSession(): void {
+  try { fs.rmSync(APP_UPDATE_SESSION_FILE, { force: true }); } catch {}
 }
 
 function buildAppUpdateCleanupTargets(downloadedPath: string): string[] {
@@ -536,42 +557,62 @@ function buildAppUpdateCleanupTargets(downloadedPath: string): string[] {
 }
 
 function createInitialAppUpdateState(): AppUpdateState {
-  const baseState: AppUpdateState = {
+  const supported = process.platform === 'win32' || process.platform === 'linux';
+  const session = readPersistedAppUpdateSession();
+  const marker = readAppUpdateResultMarker();
+  const resolution = reconcilePersistedAppUpdateState({
     currentVersion: app.getVersion(),
-    checking: false,
-    downloading: false,
-    installing: false,
-    lastCheckedAt: null,
-    available: false,
-    supported: process.platform === 'win32' || process.platform === 'linux',
-    latestVersion: null,
-    releaseUrl: null,
-    releaseNotes: null,
-    assetName: null,
-    assetSize: null,
-    downloadedBytes: 0,
-    totalBytes: null,
-    downloadedPath: null,
-    readyToInstall: false,
-    restartRequired: false,
-    error: null,
-  };
+    supported,
+    session,
+    resultMarker: marker,
+    downloadedFileExists: session ? fs.existsSync(path.resolve(session.downloadedPath)) : false,
+  });
 
-  const marker = consumeAppUpdateResultMarker();
-  if (!marker) return baseState;
-  if (marker.status === 'success' && compareReleaseVersions(app.getVersion(), marker.version) >= 0) {
-    return {
-      ...baseState,
-      latestVersion: `v${normalizeReleaseVersion(app.getVersion())}`,
-    };
-  }
-  return {
-    ...baseState,
-    error: marker.message ?? 'The last in-app update did not finish successfully.',
-  };
+  if (resolution.clearSession) clearPersistedAppUpdateSession();
+  if (resolution.clearResultMarker) clearAppUpdateResultMarker();
+
+  return resolution.state;
 }
 
 let appUpdateState: AppUpdateState = createInitialAppUpdateState();
+
+function reconcilePersistedUpdaterState(): AppUpdateState {
+  const supported = process.platform === 'win32' || process.platform === 'linux';
+  const session = readPersistedAppUpdateSession();
+  const marker = consumeAppUpdateResultMarker();
+  const resolution = reconcilePersistedAppUpdateState({
+    currentVersion: app.getVersion(),
+    supported,
+    session,
+    resultMarker: marker,
+    downloadedFileExists: session ? fs.existsSync(path.resolve(session.downloadedPath)) : false,
+  });
+
+  if (resolution.clearSession) clearPersistedAppUpdateSession();
+  if (resolution.clearResultMarker) clearAppUpdateResultMarker();
+
+  appUpdateState = resolution.state;
+  return appUpdateState;
+}
+
+function buildPersistedAppUpdateSession(phase: 'downloaded' | 'install-requested'): PersistedAppUpdateSession {
+  if (!appUpdateState.downloadedPath || !appUpdateState.assetName || !appUpdateState.latestVersion) {
+    throw new Error('No downloaded update is ready to persist.');
+  }
+
+  return createPersistedAppUpdateSession({
+    phase,
+    platform: process.platform,
+    currentVersion: app.getVersion(),
+    latestVersion: appUpdateState.latestVersion,
+    releaseUrl: appUpdateState.releaseUrl,
+    releaseNotes: appUpdateState.releaseNotes,
+    assetName: appUpdateState.assetName,
+    assetSize: appUpdateState.assetSize,
+    downloadedPath: path.resolve(appUpdateState.downloadedPath),
+    requestedAt: phase === 'install-requested' ? new Date().toISOString() : null,
+  });
+}
 
 function setAppUpdateState(patch: Partial<AppUpdateState>): AppUpdateState {
   appUpdateState = {
@@ -621,8 +662,16 @@ function selectLatestReleaseAsset(release: LatestReleaseInfo): ReleaseAssetInfo 
 }
 
 async function checkForAppUpdates(): Promise<AppUpdateState> {
+  reconcilePersistedUpdaterState();
   if (appUpdateState.restartRequired) {
     return setAppUpdateState({ checking: false, available: false, error: null });
+  }
+  if (appUpdateState.readyToInstall && appUpdateState.downloadedPath && fs.existsSync(appUpdateState.downloadedPath)) {
+    return setAppUpdateState({
+      checking: false,
+      installing: false,
+      lastCheckedAt: Date.now(),
+    });
   }
   setAppUpdateState({ checking: true, error: null });
   const checkedAt = Date.now();
@@ -669,6 +718,7 @@ async function checkForAppUpdates(): Promise<AppUpdateState> {
 }
 
 async function downloadLatestAppUpdate(): Promise<AppUpdateState> {
+  reconcilePersistedUpdaterState();
   if (appUpdateState.downloading) return appUpdateState;
   if (!appUpdateState.supported) {
     throw new Error('In-app updates are not supported on this platform.');
@@ -782,7 +832,7 @@ async function downloadLatestAppUpdate(): Promise<AppUpdateState> {
     if (process.platform === 'linux' && finalPath.endsWith('.AppImage')) {
       fs.chmodSync(finalPath, 0o755);
     }
-    return setAppUpdateState({
+    const nextState = setAppUpdateState({
       downloading: false,
       installing: false,
       downloadedPath: finalPath,
@@ -791,6 +841,8 @@ async function downloadLatestAppUpdate(): Promise<AppUpdateState> {
       restartRequired: false,
       error: null,
     });
+    writePersistedAppUpdateSession(buildPersistedAppUpdateSession('downloaded'));
+    return nextState;
   } catch (error: any) {
     try { fs.rmSync(tempPath, { force: true }); } catch {}
     return setAppUpdateState({
@@ -805,6 +857,7 @@ async function downloadLatestAppUpdate(): Promise<AppUpdateState> {
 }
 
 async function installDownloadedUpdate(): Promise<AppUpdateState> {
+  reconcilePersistedUpdaterState();
   if (!appUpdateState.downloadedPath || !fs.existsSync(appUpdateState.downloadedPath)) {
     throw new Error('No downloaded update is ready to install.');
   }
@@ -822,6 +875,7 @@ $installerPath = ${JSON.stringify(installerPath)}
 $resultPath = ${JSON.stringify(APP_UPDATE_RESULT_FILE)}
 $targetVersion = ${JSON.stringify(normalizeReleaseVersion(appUpdateState.latestVersion ?? app.getVersion()))}
 $userDataPath = ${JSON.stringify(app.getPath('userData'))}
+$relaunchPath = ${JSON.stringify(process.execPath)}
 $cleanupTargets = @(
 ${cleanupTargets.map((entry) => `  ${JSON.stringify(entry)}`).join(",\n")}
 )
@@ -856,6 +910,11 @@ try {
   @{ status = 'success'; version = $targetVersion; completedAt = (Get-Date).ToString('o'); message = 'Update installed successfully.' } |
     ConvertTo-Json -Compress |
     Set-Content -LiteralPath $resultPath -Encoding UTF8
+
+  Start-Sleep -Seconds 1
+  if (Test-Path -LiteralPath $relaunchPath) {
+    Start-Process -FilePath $relaunchPath | Out-Null
+  }
 } catch {
   @{ status = 'failed'; version = $targetVersion; completedAt = (Get-Date).ToString('o'); message = $_.Exception.Message } |
     ConvertTo-Json -Compress |
@@ -877,18 +936,20 @@ try {
       stdio: 'ignore',
     });
     worker.unref();
-
-    return setAppUpdateState({
-      installing: false,
+    writePersistedAppUpdateSession(buildPersistedAppUpdateSession('install-requested'));
+    const nextState = setAppUpdateState({
+      checking: false,
+      installing: true,
       available: false,
       downloading: false,
-      downloadedPath: null,
-      downloadedBytes: 0,
-      totalBytes: null,
       readyToInstall: false,
-      restartRequired: true,
+      restartRequired: false,
       error: null,
     });
+    setTimeout(() => {
+      app.quit();
+    }, 200);
+    return nextState;
   }
 
   setAppUpdateState({ installing: true, error: null });
@@ -903,6 +964,13 @@ try {
 }
 
 function quitForScheduledAppUpdate(): boolean {
+  const session = readPersistedAppUpdateSession();
+  const hasPendingInstall = session
+    && session.phase === 'install-requested'
+    && fs.existsSync(path.resolve(session.downloadedPath));
+  if (!hasPendingInstall && !appUpdateState.restartRequired) {
+    throw new Error('No pending update install is waiting for restart.');
+  }
   setTimeout(() => app.quit(), 100);
   return true;
 }
@@ -4294,7 +4362,7 @@ app.whenReady().then(async () => {
   });
 
   ipcHandle('app:update-state', async () => {
-    return setAppUpdateState({});
+    return reconcilePersistedUpdaterState();
   });
 
   ipcHandle('app:check-for-updates', async () => {
