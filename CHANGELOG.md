@@ -2,6 +2,14 @@
 
 Project note: the app is now branded as `OpCore-OneClick`. Legacy repo/update coordinates and the persisted app-data path remain unchanged for continuity.
 
+## 2.7.11 - 2026-03-23
+
+### Fix #36 kext fail-fast, #37A updater dead-click, #37B/#37C flash error classification
+- **#36**: Required kexts with no valid source (e.g. NootedRed offline, no embedded fallback) now fail fast before EFI validation. Removed pre-creation of empty kext directories that masked fetch failures. Stub directories from failed fetches are cleaned up.
+- **#37A**: "Check for updates" button no longer silently does nothing — falls through to `checkForAppUpdates()` when no other state matches.
+- **#37B**: Flash-usb errors containing "hardware" or "scan" no longer falsely match `hardware_scan_failed`. Hardware scan classifier narrowed to actual scan/detection context only.
+- **#37C**: Compound diskpart + Format-Volume failures now report both stages failed. Generic diskpart fallback includes stage annotation.
+
 ## 2.7.10 - 2026-03-23
 
 ### EFI Generation fixes for Coffee Lake, Z390, and Tahoe

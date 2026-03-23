@@ -1420,7 +1420,8 @@ export function createDiskOps(log: LogFunction): DiskOps {
       if (formatRecovered && driveLetter) return { diskNum, driveLetter };
       throw new Error(
         `diskpart created a partition on disk ${diskNum}, but failed to format it as FAT32 OPENCORE. ` +
-        'The partition exists, but Windows did not report a FAT32 volume on it after diskpart finished. ' +
+        'Both diskpart inline format and PowerShell Format-Volume recovery failed. ' +
+        'Stage: partition exists → format failed → Format-Volume fallback also failed. ' +
         'Close Explorer windows, antivirus scans, or backup tools touching this drive, then retry. ' +
         'If it keeps failing, format partition 1 manually as FAT32 and label it OPENCORE before retrying.'
       );
@@ -1459,8 +1460,8 @@ export function createDiskOps(log: LogFunction): DiskOps {
 
     throw new Error(
       lastDiskpartError
-        ? `diskpart could not prepare disk ${diskNum}. ${lastDiskpartError.message}`
-        : `diskpart could not prepare disk ${diskNum}. Close all programs using this drive, unplug and reconnect it, then try again.`
+        ? `diskpart could not prepare disk ${diskNum} (stage: ${lastAssessment.stage}). ${lastDiskpartError.message}`
+        : `diskpart could not prepare disk ${diskNum} (stage: ${lastAssessment.stage}). Close all programs using this drive, unplug and reconnect it, then try again.`
     );
   }
 

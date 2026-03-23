@@ -143,4 +143,37 @@ describe('resolveKextSourcePlan — 5-route resolution', () => {
       expect(validRoutes).toContain(c.route);
     }
   });
+
+  // ─── #36: NootedRed-like required kexts with no fallback ────────────────
+
+  it('NootedRed-like kext: github-only, no embedded, probe fails → failed route', () => {
+    const entry: KextRegistryEntry = {
+      repo: 'ChefKissInc/NootedRed',
+    };
+    const probe: KextReleaseProbe = {
+      version: null,
+      assetUrl: null,
+      error: 'GitHub API request failed: connection refused',
+    };
+    const result = resolveKextSourcePlan('NootedRed.kext', entry, probe);
+    expect(result.route).toBe('failed');
+    expect(result.available).toBe(false);
+    expect(result.message).toContain('connection refused');
+  });
+
+  it('NootedRed-like kext: no probe at all → failed route', () => {
+    const entry: KextRegistryEntry = {
+      repo: 'ChefKissInc/NootedRed',
+    };
+    const result = resolveKextSourcePlan('NootedRed.kext', entry, { assetUrl: null });
+    expect(result.route).toBe('failed');
+    expect(result.available).toBe(false);
+  });
+
+  it('failed kext has available=false so pre-build can gate on it', () => {
+    const entry: KextRegistryEntry = { repo: 'ChefKissInc/NootedRed' };
+    const result = resolveKextSourcePlan('NootedRed.kext', entry, { assetUrl: null, error: 'offline' });
+    expect(result.available).toBe(false);
+    expect(result.route).toBe('failed');
+  });
 });

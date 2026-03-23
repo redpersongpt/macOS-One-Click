@@ -1547,10 +1547,9 @@ async function createEfiStructure(
     );
   }
 
-  kexts.forEach(k => {
-    const kextDir = path.resolve(basePath, 'EFI/OC/Kexts', k);
-    if (!fs.existsSync(kextDir)) fs.mkdirSync(kextDir, { recursive: true });
-  });
+  // Kext directories are created by fetch-latest-kexts when content is ready.
+  // Pre-creating empty stubs causes broken-bundle validation failures
+  // when a kext fetch fails (e.g. NootedRed with no embedded fallback).
 }
 
 // --- Hardware Detection per Platform ---
@@ -3466,6 +3465,13 @@ app.whenReady().then(async () => {
           result = { name: kextName, version: 'unavailable' };
           source = 'failed';
           log('ERROR', 'kext', `${kextName} — HARD FAIL: no source available`);
+
+          // Clean up any stub directory so the validator never sees a partial bundle
+          const stubDir = path.resolve(kextsDir, `${kextName}.kext`);
+          if (fs.existsSync(stubDir)) {
+            try { fs.rmSync(stubDir, { recursive: true, force: true }); } catch (_) {}
+            log('INFO', 'kext', `${kextName} — removed stub directory to prevent misleading validation`, { stubDir });
+          }
         }
 
         kextSources[kextName] = source;
@@ -3475,6 +3481,24 @@ app.whenReady().then(async () => {
           index: results.length, total: kextNames.length, source,
         });
       }
+      // Fail-fast: if any kexts failed, throw an explicit error before validation
+      // so the user sees "kext unavailable" instead of a late "bundle incomplete" surprise.
+      if (failedKexts.length > 0) {
+        const summary = failedKexts
+          .map(fk => `${fk.name} (${fk.repo}): ${fk.error}`)
+          .join('; ');
+        const errorMessage =
+          failedKexts.length === 1
+            ? `Required kext unavailable: ${failedKexts[0].name} — ${failedKexts[0].error}. ` +
+              `No embedded fallback exists for ${failedKexts[0].name}. ` +
+              'Internet access required to download this kext from GitHub.'
+            : `${failedKexts.length} required kexts unavailable: ${summary}. ` +
+              'Internet access is required for kexts that have no embedded fallback.';
+        log('ERROR', 'kext', 'Kext fetch completed with hard failures', { failedKexts });
+        registry.fail(token.taskId, errorMessage);
+        throw new Error(errorMessage);
+      }
+
       registry.complete(token.taskId);
       return results;
     } catch (e) {

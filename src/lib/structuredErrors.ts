@@ -225,6 +225,16 @@ const ERROR_MAP: Array<{
     },
   },
   {
+    test: m => m.includes('format-volume') && m.includes('also failed'),
+    structured: {
+      title: 'Windows format failed (both methods)',
+      what: 'diskpart created a partition, but both diskpart inline format and PowerShell Format-Volume recovery failed to produce a FAT32 OPENCORE volume.',
+      nextStep: 'Close all programs using this drive, unplug and reconnect it, then try again. If it keeps failing, open Disk Management and manually format partition 1 as FAT32 with the label OPENCORE.',
+      retryable: true,
+      retryNote: 'after reconnecting the drive',
+    },
+  },
+  {
     test: m => m.includes('failed to format it as fat32 opencore'),
     structured: {
       title: 'Windows partition format failed',
@@ -408,7 +418,14 @@ const ERROR_MAP: Array<{
     },
   },
   {
-    test: m => m.includes('scan') || m.includes('hardware'),
+    test: m =>
+      (m.includes('hardware scan') || m.includes('hardware detection') || m.includes('hardware_scan_failed'))
+      && !m.includes('flash')
+      && !m.includes('diskpart')
+      && !m.includes('format')
+      && !m.includes('partition')
+      && !m.includes('write')
+      && !m.includes('usb'),
     structured: {
       title: 'Hardware scan failed',
       what: 'The hardware scan could not complete. A system query returned an error.',

@@ -743,6 +743,9 @@ export default function App() {
       void downloadLatestUpdate();
       return;
     }
+    // Fallback: no active download/install state — trigger a fresh check.
+    // Without this, clicking the button when it shows "Check for updates" was a no-op.
+    void checkForAppUpdates();
     void checkForAppUpdates();
   };
 

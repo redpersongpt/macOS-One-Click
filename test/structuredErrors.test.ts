@@ -212,3 +212,67 @@ describe('structureError — download failed message update', () => {
     expect(e.nextStep).toContain('internet connection');
   });
 });
+
+describe('structureError — #36 required kext fail-fast', () => {
+  it('classifies required kext unavailable from the fail-fast error', () => {
+    const e = structureError(
+      'Required kext unavailable: NootedRed.kext — GitHub API fetch failed: connection refused | ' +
+      'No embedded fallback for NootedRed.kext — internet access required (ChefKissInc/NootedRed). ' +
+      'No embedded fallback exists for NootedRed.kext. Internet access required to download this kext from GitHub.',
+    );
+    expect(e.title).toContain('Kext unavailable');
+    expect(e.retryable).toBe(true);
+  });
+
+  it('NootedRed-like kext failure does not match hardware scan', () => {
+    const e = structureError(
+      'Required kext unavailable: NootedRed.kext — No embedded fallback for NootedRed.kext',
+    );
+    expect(e.title).not.toContain('Hardware scan');
+  });
+});
+
+describe('structureError — #37B flash-usb cannot surface hardware_scan_failed', () => {
+  it('flash error containing "hardware" does not match hardware scan', () => {
+    const e = structureError('flash write failed: hardware not responding on /dev/sdb');
+    expect(e.title).not.toBe('Hardware scan failed');
+  });
+
+  it('flash error containing "scan" does not match hardware scan', () => {
+    const e = structureError('diskpart scanning partition table failed during flash-usb');
+    expect(e.title).not.toBe('Hardware scan failed');
+  });
+
+  it('actual hardware scan error still matches', () => {
+    const e = structureError('hardware scan could not complete — system query error');
+    expect(e.title).toBe('Hardware scan failed');
+    expect(e.retryable).toBe(true);
+  });
+
+  it('hardware detection failure still matches', () => {
+    const e = structureError('hardware detection failed on this system');
+    expect(e.title).toBe('Hardware scan failed');
+  });
+
+  it('stale error with "hardware" and "usb" does not match hardware scan', () => {
+    const e = structureError('hardware write error on usb device');
+    expect(e.title).not.toBe('Hardware scan failed');
+  });
+});
+
+describe('structureError — #37C compound format failure', () => {
+  it('classifies compound diskpart + Format-Volume failure', () => {
+    const e = structureError(
+      'diskpart created a partition on disk 2, but failed to format it as FAT32 OPENCORE. ' +
+      'Both diskpart inline format and PowerShell Format-Volume recovery failed.',
+    );
+    expect(e.title).toContain('format');
+    expect(e.retryable).toBe(true);
+  });
+
+  it('stage-annotated generic failure is classified', () => {
+    const e = structureError('diskpart could not prepare disk 3 (stage: format). Something went wrong.');
+    expect(e.title).toContain('disk preparation');
+    expect(e.retryable).toBe(true);
+  });
+});
