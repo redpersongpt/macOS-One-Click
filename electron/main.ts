@@ -1728,10 +1728,11 @@ const KEXT_REGISTRY: Record<string, KextRegistryEntry> = {
   'RestrictEvents.kext':                { repo: 'acidanthera/RestrictEvents',          assetFilter: 'RELEASE' },
   'NVMeFix.kext':                       { repo: 'acidanthera/NVMeFix',                assetFilter: 'RELEASE' },
   'CPUTopologyRebuild.kext':            { repo: 'b00t0x/CpuTopologyRebuild',           assetFilter: 'RELEASE' },
-  'ECEnabler.kext':                     { repo: '1Revenger1/ECEnabler',                assetFilter: 'RELEASE' },
+  'ECEnabler.kext':                     { repo: 'averycblack/ECEnabler',               assetFilter: 'RELEASE' },
   'SMCProcessor.kext':                  { repo: 'acidanthera/VirtualSMC',              assetFilter: 'RELEASE' },
   'SMCSuperIO.kext':                    { repo: 'acidanthera/VirtualSMC',              assetFilter: 'RELEASE' },
   'IntelMausi.kext':                    { repo: 'acidanthera/IntelMausi',              assetFilter: 'RELEASE' },
+  'USBInjectAll.kext':                  { repo: 'Sniki/OS-X-USB-Inject-All',          assetFilter: 'RELEASE' },
 };
 
 for (const [kextName, entry] of Object.entries(KEXT_REGISTRY)) {
