@@ -1,4 +1,13 @@
-import { normalizeErrorMessage, normalizeErrorMessageLower } from './errorMessage.js';
+import {
+  isFlashPrepareBiosBlockedMessage,
+  isFlashPrepareCompatibilityBlockedMessage,
+  isFlashPrepareDiskIdentityBlockedMessage,
+  isFlashPrepareEfiValidationBlockedMessage,
+  isFlashPrepareSelectedDiskMissingMessage,
+  isGenericFlashPrepareBlockedMessage,
+  normalizeErrorMessage,
+  normalizeErrorMessageLower,
+} from './errorMessage.js';
 
 // ── Structured error types ─────────────────────────────────────────────────────
 
@@ -80,7 +89,7 @@ const ERROR_MAP: Array<{
     },
   },
   {
-    test: m => m.includes('bios readiness is no longer satisfied'),
+    test: m => isFlashPrepareBiosBlockedMessage(m),
     structured: {
       title: 'Flashing is blocked by BIOS readiness',
       what: 'The app rechecked the firmware prerequisites immediately before flashing, and they are no longer satisfied.',
@@ -89,7 +98,7 @@ const ERROR_MAP: Array<{
     },
   },
   {
-    test: m => m.includes('compatibility is blocked') && m.includes('deployment'),
+    test: m => isFlashPrepareCompatibilityBlockedMessage(m),
     structured: {
       title: 'Flashing is blocked by compatibility',
       what: 'The selected macOS target is no longer deployable from the current compatibility state.',
@@ -98,7 +107,7 @@ const ERROR_MAP: Array<{
     },
   },
   {
-    test: m => m.includes('no target disk is selected for flashing'),
+    test: m => isFlashPrepareSelectedDiskMissingMessage(m),
     structured: {
       title: 'No target disk selected',
       what: 'The flash confirmation step was reached without a selected target disk.',
@@ -107,11 +116,29 @@ const ERROR_MAP: Array<{
     },
   },
   {
-    test: m => m.includes('disk identity could not be confirmed') || m.includes('no disk identity fingerprint was captured'),
+    test: m => isFlashPrepareDiskIdentityBlockedMessage(m),
     structured: {
       title: 'Disk identity is missing',
       what: 'The app could not confirm the physical identity of the selected drive at the destructive flash boundary.',
       nextStep: 'Reconnect the drive, re-select it, wait for the details to load, then reopen the flash confirmation dialog.',
+      retryable: true,
+    },
+  },
+  {
+    test: m => isFlashPrepareEfiValidationBlockedMessage(m),
+    structured: {
+      title: 'Flashing is blocked by EFI validation',
+      what: 'The app rechecked the EFI before flashing and it is no longer clean enough for deployment.',
+      nextStep: 'Return to the report or build step, rebuild or revalidate the EFI, then reopen the flash confirmation dialog.',
+      retryable: true,
+    },
+  },
+  {
+    test: m => isGenericFlashPrepareBlockedMessage(m),
+    structured: {
+      title: 'Flash preparation is blocked',
+      what: 'A destructive safety check stopped the flash step before any USB write started.',
+      nextStep: 'Return to the step named in the blocker, fix that prerequisite, then reopen the flash confirmation dialog.',
       retryable: true,
     },
   },

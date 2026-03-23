@@ -163,3 +163,58 @@ describe('appUpdater persistence helpers', () => {
     expect(resolution.clearSession).toBe(true);
   });
 });
+
+// Regression: app:update-state must not call reconcilePersistedUpdaterState().
+// That function clobbers in-memory appUpdateState from disk. During an active
+// download there is no session file yet, so a disk-reconcile produces base
+// state (downloading:false), wipes progress, and allows a second download to
+// start. The IPC handler now returns appUpdateState directly.
+//
+// This test verifies the pure reconcile helper behaves consistently so the
+// regression is well-defined: reconciling with no session and no marker always
+// produces base state, which would overwrite any in-progress download state.
+describe('app:update-state — no disk reconcile during active operations', () => {
+  it('reconcile with no session and no marker produces clean base state', () => {
+    const base = reconcilePersistedAppUpdateState({
+      currentVersion: '2.7.4',
+      supported: true,
+      session: null,
+      resultMarker: null,
+      downloadedFileExists: false,
+    });
+    // This is the state that would overwrite downloading:true if reconcile
+    // were called from the polling handler.
+    expect(base.state.downloading).toBe(false);
+    expect(base.state.available).toBe(false);
+    expect(base.state.readyToInstall).toBe(false);
+  });
+
+  it('a failed-install result marker surfaces an error without re-reconciling', () => {
+    // After a failed install, createInitialAppUpdateState sets appUpdateState
+    // with readyToInstall:true + error. The first app:update-state poll must
+    // return that state unchanged, not call reconcile and lose the error.
+    const failedResolution = reconcilePersistedAppUpdateState({
+      currentVersion: '2.7.4',
+      supported: true,
+      session: baseSession({ phase: 'install-requested', targetVersion: '2.7.5' }),
+      resultMarker: resultMarker({ status: 'failed', version: '2.7.5', message: 'Installer exited with code 1.' }),
+      downloadedFileExists: true,
+    });
+    // State should carry the error from the failed install, not be clean.
+    expect(failedResolution.state.error).toBeTruthy();
+    expect(failedResolution.state.readyToInstall).toBe(true);
+    // If the polling handler called reconcile again after the marker was
+    // already consumed, it would see no marker + session → loses the error.
+    const secondReconcile = reconcilePersistedAppUpdateState({
+      currentVersion: '2.7.4',
+      supported: true,
+      session: baseSession({ phase: 'install-requested', targetVersion: '2.7.5' }),
+      resultMarker: null, // marker already consumed by first reconcile
+      downloadedFileExists: true,
+    });
+    // Error message changes on second reconcile — confirms the state would
+    // be different if the IPC handler called reconcile instead of returning
+    // appUpdateState directly.
+    expect(secondReconcile.state.error).not.toBe(failedResolution.state.error);
+  });
+});

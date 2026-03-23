@@ -13,7 +13,15 @@ import {
   hasUnsupportedModernNvidia,
   parseMacOSVersion,
 } from '../../electron/hackintoshRules.js';
-import { normalizeErrorMessage } from './errorMessage.js';
+import {
+  isFlashPrepareBiosBlockedMessage,
+  isFlashPrepareCompatibilityBlockedMessage,
+  isFlashPrepareDiskIdentityBlockedMessage,
+  isFlashPrepareEfiValidationBlockedMessage,
+  isFlashPrepareSelectedDiskMissingMessage,
+  isGenericFlashPrepareBlockedMessage,
+  normalizeErrorMessage,
+} from './errorMessage.js';
 import { structureError } from './structuredErrors';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -642,7 +650,7 @@ const TEMPLATES: SuggestionTemplate[] = [
 
   // ── Flash prepare blocked by BIOS readiness ───────────────────
   {
-    test: m => m.includes('bios readiness is no longer satisfied'),
+    test: m => isFlashPrepareBiosBlockedMessage(m),
     code: 'bios_readiness_blocked',
     category: 'validation_error',
     build: () => ({
@@ -673,7 +681,7 @@ const TEMPLATES: SuggestionTemplate[] = [
 
   // ── Flash prepare blocked by compatibility / display path ────
   {
-    test: m => m.includes('compatibility is blocked') || m.includes('no supported display path'),
+    test: m => isFlashPrepareCompatibilityBlockedMessage(m),
     code: 'compatibility_blocked',
     category: 'validation_error',
     build: () => ({
@@ -695,7 +703,7 @@ const TEMPLATES: SuggestionTemplate[] = [
 
   // ── Flash prepare blocked by missing selected disk ────────────
   {
-    test: m => m.includes('no target disk is selected for flashing') || m.includes('target disk') && m.includes('no longer available'),
+    test: m => isFlashPrepareSelectedDiskMissingMessage(m),
     code: 'selected_disk_missing',
     category: 'device_error',
     build: () => ({
@@ -717,7 +725,7 @@ const TEMPLATES: SuggestionTemplate[] = [
 
   // ── Flash prepare blocked by missing disk identity ────────────
   {
-    test: m => m.includes('disk identity could not be confirmed') || m.includes('no disk identity fingerprint was captured'),
+    test: m => isFlashPrepareDiskIdentityBlockedMessage(m),
     code: 'disk_identity_missing',
     category: 'validation_error',
     build: () => ({
@@ -732,6 +740,50 @@ const TEMPLATES: SuggestionTemplate[] = [
         'fix_now',
         'This safety check prevents the app from guessing which physical drive you meant',
         'The drive gets a fresh identity snapshot before the flash confirmation dialog opens again',
+      ),
+      alternatives: [],
+    }),
+  },
+
+  // ── Flash prepare blocked by EFI validation / deploy preconditions ──────
+  {
+    test: m => isFlashPrepareEfiValidationBlockedMessage(m),
+    code: 'destructive_preconditions_not_met',
+    category: 'validation_error',
+    build: () => ({
+      title: 'Flashing is blocked by EFI validation',
+      explanation: 'The app rechecked the EFI at the destructive flash boundary and it is no longer valid for deployment.',
+      severity: 'critical',
+      decisionSummary: '',
+      primaryAction: act(
+        'Return to the report step and rebuild or revalidate the EFI',
+        'high',
+        'The USB write never started — deployment was blocked before any destructive action began',
+        'fix_now',
+        'Retrying the USB step will not help until the EFI passes validation again',
+        'The deployment path becomes valid again before you reopen the flash confirmation dialog',
+      ),
+      alternatives: [],
+    }),
+  },
+
+  // ── Generic flash prepare blocker fallback ────────────────────
+  {
+    test: m => isGenericFlashPrepareBlockedMessage(m),
+    code: 'flash_prepare_blocked',
+    category: 'validation_error',
+    build: () => ({
+      title: 'Flash preparation is blocked',
+      explanation: 'A destructive safety check stopped the flash step before any USB write started.',
+      severity: 'critical',
+      decisionSummary: '',
+      primaryAction: act(
+        'Return to the step named in the blocker and fix that prerequisite first',
+        'high',
+        'The USB write never started, so retrying the same flash action will not fix the underlying block',
+        'fix_now',
+        'A precondition at the destructive boundary failed after the earlier steps had already been completed',
+        'You return to the real blocker instead of staying in a fake USB write recovery flow',
       ),
       alternatives: [],
     }),

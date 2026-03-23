@@ -4393,7 +4393,13 @@ app.whenReady().then(async () => {
   });
 
   ipcHandle('app:update-state', async () => {
-    return reconcilePersistedUpdaterState();
+    // Return in-memory state directly. Disk reconciliation only happens at
+    // startup (createInitialAppUpdateState) and at the start of each action
+    // function (checkForAppUpdates, downloadLatestAppUpdate,
+    // installDownloadedUpdate). Calling reconcilePersistedUpdaterState here
+    // would clobber active in-memory state (e.g. downloading:true) with stale
+    // disk state, wiping download progress and allowing double-downloads.
+    return appUpdateState;
   });
 
   ipcHandle('app:check-for-updates', async () => {
