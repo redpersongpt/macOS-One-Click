@@ -823,9 +823,57 @@ const TEMPLATES: SuggestionTemplate[] = [
     },
   },
 
-  // ── Flash / write error ───────────────────────────────────────
   {
-    test: m => (m.includes('flash') || m.includes('write') || m.includes('dd:')) && (m.includes('fail') || m.includes('error')),
+    test: m => m.includes('diskpart') && (m.includes('format') || m.includes('fat32')) && (m.includes('fail') || m.includes('error')),
+    code: 'diskpart_format_failed',
+    category: 'device_error',
+    build: (ctx) => {
+      const tier = getEscalationTier(ctx.retryCount ?? 0);
+      return {
+        title: tier === 'escalated' ? 'Disk formatting keeps failing' : 'Disk format failed',
+        explanation: 'Windows could not format the partition as FAT32. Another process may be locking the drive, or the drive controller is rejecting the format command.',
+        severity: 'critical',
+        decisionSummary: 'Close all Explorer windows and programs touching this drive, then retry.',
+        primaryAction: act(
+          tier === 'escalated'
+            ? 'Try a different USB drive'
+            : 'Close Explorer and any programs accessing the drive, then retry',
+          'high',
+          tier === 'escalated'
+            ? 'Repeated format failures after clearing locks point to a drive or controller issue'
+            : 'Explorer and backup tools hold volume locks that block format operations',
+          'fix_now',
+          tier === 'escalated'
+            ? 'The same drive has failed formatting multiple times'
+            : 'Windows diskpart and Format-Volume both fail when another process holds the volume open',
+          tier === 'escalated'
+            ? 'A different drive eliminates the faulty controller or media'
+            : 'Releasing the volume lock lets the format proceed',
+        ),
+        alternatives: [
+          act(
+            'Open Disk Management (diskmgmt.msc), delete all partitions on the drive, create a new FAT32 volume labeled OPENCORE, then retry',
+            'medium',
+            'Disk Management uses a different code path and has its own lock-clearing behavior',
+            'try_alternative',
+            'The programmatic path failed, but the GUI path may succeed',
+            'A manually created OPENCORE FAT32 volume is reused by the app without re-running diskpart',
+          ),
+          ...(ctx.platform === 'win32' ? [act(
+            'Try a different USB port — preferably a rear motherboard port',
+            'medium',
+            'Front-panel and hub ports can cause unstable device communication during format',
+            'try_alternative',
+            'Some USB controllers have intermittent issues with partition operations',
+            'A direct motherboard port provides stable communication',
+          )] : []),
+        ],
+      };
+    },
+  },
+
+  {
+    test: m => (m.includes('flash') || m.includes('write') || m.includes('dd:') || m.includes('diskpart')) && (m.includes('fail') || m.includes('error')),
     code: 'flash_write_error',
     category: 'device_error',
     build: (ctx) => {
@@ -1274,7 +1322,8 @@ const TEMPLATES: SuggestionTemplate[] = [
 
   // ── Hardware scan failure ─────────────────────────────────────
   {
-    test: m => m.includes('scan') && (m.includes('fail') || m.includes('error')),
+    test: m => m.includes('scan') && (m.includes('fail') || m.includes('error'))
+      && !m.includes('diskpart') && !m.includes('format') && !m.includes('partition') && !m.includes('fat32') && !m.includes('flash') && !m.includes('opencore'),
     code: 'hardware_scan_failed',
     category: 'hardware_error',
     build: (ctx) => {

@@ -100,3 +100,41 @@ describe('getSuggestionPayload — #38 diskpart format must not match recovery_d
     expect(payload.code).toBe('recovery_download_failed');
   });
 });
+
+describe('getSuggestionPayload — #39 diskpart format must not match hardware_scan_failed', () => {
+  it('diskpart format failure with "antivirus scans" text is classified as diskpart_format_failed', () => {
+    const payload = getSuggestionPayload({
+      errorMessage:
+        "Error invoking remote method 'flash-usb': Error: diskpart created a partition on disk 2, " +
+        "but failed to format it as FAT32 OPENCORE. Both diskpart inline format and PowerShell " +
+        "Format-Volume fallback failed. Stage: partition exists → format failed → Format-Volume fallback also failed. " +
+        "Close Explorer windows, antivirus scans, or backup tools touching this drive, then retry.",
+      platform: 'win32',
+      step: 'usb-select',
+    });
+
+    expect(payload.code).toBe('diskpart_format_failed');
+    expect(payload.code).not.toBe('hardware_scan_failed');
+    expect(payload.message).not.toContain('Hardware detection');
+  });
+
+  it('actual hardware scan failure still classifies correctly', () => {
+    const payload = getSuggestionPayload({
+      errorMessage: 'hardware scan could not complete — system query error',
+      platform: 'win32',
+      step: 'scanning',
+    });
+
+    expect(payload.code).toBe('hardware_scan_failed');
+  });
+
+  it('diskpart partition creation failure classifies as flash_write_error not hardware_scan', () => {
+    const payload = getSuggestionPayload({
+      errorMessage: "Error invoking remote method 'flash-usb': Error: diskpart failed to create a partition on disk 2",
+      platform: 'win32',
+      step: 'usb-select',
+    });
+
+    expect(payload.code).not.toBe('hardware_scan_failed');
+  });
+});

@@ -2,6 +2,14 @@
 
 Project note: the app is now branded as `OpCore-OneClick`. Legacy repo/update coordinates and the persisted app-data path remain unchanged for continuity.
 
+## 2.7.15 - 2026-03-23
+
+### Fix #39 diskpart format error misclassified as hardware scan failure
+- Diskpart format failures containing "antivirus scans" in the remediation text were matching the `hardware_scan_failed` suggestion pattern because `m.includes('scan')` matched. User saw "Hardware detection failed" instead of actionable format-retry guidance.
+- Added dedicated `diskpart_format_failed` suggestion pattern with correct remediation (close Explorer, retry, manual Disk Management fallback).
+- Narrowed `hardware_scan_failed` to exclude messages containing diskpart/format/partition/fat32/flash/opencore context.
+- Widened `flash_write_error` to also match `diskpart` keyword so diskpart partition failures route correctly after IPC prefix stripping.
+
 ## 2.7.14 - 2026-03-23
 
 ### Fix Windows in-app updater install loop
