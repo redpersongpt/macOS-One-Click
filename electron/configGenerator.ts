@@ -243,9 +243,11 @@ export function getQuirksForGeneration(gen: HardwareProfile['generation'], mothe
             quirks.DevirtualiseMmio = true;
             // Z390 needs SetupVirtualMap true (older), Z370 too
             quirks.SetupVirtualMap = true;
-            // Z390 boards need ProtectUefiServices — Source: config.plist/coffee-lake.html
-            if (mb.includes('z390')) {
+            // Z390/Z370 boards need ProtectUefiServices — Source: config.plist/coffee-lake.html
+            if (mb.includes('z390') || mb.includes('z370')) {
                 quirks.ProtectUefiServices = true;
+                // Z390/Z370 also need DisableRtcChecksum to prevent BIOS resets — Source: Dortania coffee-lake.html
+                quirks.DisableRtcChecksum = true;
             }
             break;
         case 'Comet Lake':
@@ -582,6 +584,11 @@ export function generateConfigPlist(profile: HardwareProfile): string {
         if (!bootArgs.includes('-wegnoegpu')) bootArgs += ' -wegnoegpu';
     }
 
+    // Intel NIC stability — fix kernel panics on I219/I225
+    if (profile.architecture === 'Intel') {
+        if (!bootArgs.includes('dk.e1000=0')) bootArgs += ' dk.e1000=0';
+    }
+
     // Coffee Lake+ laptop backlight fix
     if (profile.isLaptop && ['Coffee Lake', 'Comet Lake', 'Rocket Lake', 'Alder Lake', 'Raptor Lake'].includes(profile.generation)) {
         if (!bootArgs.includes('-igfxblr')) bootArgs += ' -igfxblr';
@@ -913,7 +920,7 @@ export function generateConfigPlist(profile: HardwareProfile): string {
                 <key>ForceDisplayRotationInEFI</key><integer>0</integer>
                 <key>SystemAudioVolume</key><data>Rg==</data>
                 <key>boot-args</key><string>${bootArgs.trim()}</string>
-                <key>csr-active-config</key><data>AAAAAA==</data>
+                <key>csr-active-config</key><data>/w8AAA==</data>
                 <key>prev-lang:kbd</key><string>en-US:0</string>
                 <key>run-efi-updater</key><string>No</string>
             </dict>
@@ -949,7 +956,7 @@ export function generateConfigPlist(profile: HardwareProfile): string {
         <key>UpdateDataHub</key><true/>
         <key>UpdateNVRAM</key><true/>
         <key>UpdateSMBIOS</key><true/>
-        <key>UpdateSMBIOSMode</key><string>Create</string>
+        <key>UpdateSMBIOSMode</key><string>Custom</string>
         <key>UseRawUuidEncoding</key><false/>
     </dict>
     <key>UEFI</key>
