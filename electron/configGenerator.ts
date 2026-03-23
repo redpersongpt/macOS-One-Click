@@ -459,6 +459,8 @@ export function getRequiredResources(profile: HardwareProfile) {
     if (profile.isLaptop) {
         pushUnique('SMCBatteryManager.kext');
         pushUnique('VoodooPS2Controller.kext');
+        // ECEnabler: allows reading/writing EC fields > 8-bit on modern laptops — Source: ktext.html
+        pushUnique('ECEnabler.kext');
         pushSsdt('SSDT-PNLF.aml');
         pushSsdt('SSDT-XOSI.aml');
     }
@@ -492,6 +494,8 @@ export function getRequiredResources(profile: HardwareProfile) {
             pushSsdt('SSDT-PLUG-ALT.aml');
             pushSsdt('SSDT-AWAC.aml');
             pushSsdt('SSDT-EC-USBX.aml');
+            // SSDT-RHUB: USB root hub reset required on Alder/Raptor Lake — Source: Dortania alder-lake.html
+            pushSsdt('SSDT-RHUB.aml');
             pushUnique('CPUTopologyRebuild.kext');
         } else if (['Coffee Lake', 'Comet Lake', 'Rocket Lake'].includes(profile.generation)) {
             pushSsdt('SSDT-PLUG.aml');
@@ -501,6 +505,10 @@ export function getRequiredResources(profile: HardwareProfile) {
             // Source: config.plist/coffee-lake.html — "Required for all 300-series motherboards"
             if (mb.includes('z390') || mb.includes('z370') || mb.includes('h370') || mb.includes('b360') || mb.includes('h310')) {
                 pushSsdt('SSDT-PMC.aml');
+            }
+            // SSDT-RHUB: USB root hub reset required on Z490 Comet Lake boards — Source: Dortania comet-lake.html
+            if (profile.generation === 'Comet Lake' && mb.includes('z490')) {
+                pushSsdt('SSDT-RHUB.aml');
             }
         } else if (['Haswell', 'Broadwell'].includes(profile.generation)) {
             // Source: config.plist/haswell.html — USBX not needed on pre-Skylake

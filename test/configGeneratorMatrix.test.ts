@@ -469,10 +469,42 @@ describe('getRequiredResources — SSDT selection matrix', () => {
     expect(r.ssdts).not.toContain('SSDT-PMC.aml');
   });
 
-  it('Alder Lake uses SSDT-PLUG-ALT (not SSDT-PLUG)', () => {
+  it('Alder Lake uses SSDT-PLUG-ALT (not SSDT-PLUG) and includes SSDT-RHUB', () => {
     const r = getRequiredResources(fakeProfile({ generation: 'Alder Lake' }));
     expect(r.ssdts).toContain('SSDT-PLUG-ALT.aml');
     expect(r.ssdts).not.toContain('SSDT-PLUG.aml');
+    expect(r.ssdts).toContain('SSDT-RHUB.aml');
+  });
+
+  it('Raptor Lake includes SSDT-RHUB', () => {
+    const r = getRequiredResources(fakeProfile({ generation: 'Raptor Lake' }));
+    expect(r.ssdts).toContain('SSDT-RHUB.aml');
+  });
+
+  it('Comet Lake Z490 includes SSDT-RHUB', () => {
+    const r = getRequiredResources(fakeProfile({
+      generation: 'Comet Lake',
+      motherboard: 'ASUS ROG Z490',
+    }));
+    expect(r.ssdts).toContain('SSDT-RHUB.aml');
+  });
+
+  it('Comet Lake non-Z490 does NOT include SSDT-RHUB', () => {
+    const r = getRequiredResources(fakeProfile({
+      generation: 'Comet Lake',
+      motherboard: 'MSI B460',
+    }));
+    expect(r.ssdts).not.toContain('SSDT-RHUB.aml');
+  });
+
+  it('laptop includes ECEnabler.kext', () => {
+    const r = getRequiredResources(fakeProfile({ isLaptop: true }));
+    expect(r.kexts).toContain('ECEnabler.kext');
+  });
+
+  it('desktop does NOT include ECEnabler.kext', () => {
+    const r = getRequiredResources(fakeProfile({ isLaptop: false }));
+    expect(r.kexts).not.toContain('ECEnabler.kext');
   });
 
   it('AMD B850 includes SSDT-CPUR', () => {

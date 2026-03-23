@@ -373,7 +373,7 @@ describe('getRequiredResources', () => {
           generation: 'Alder Lake',
           motherboard: 'MSI Z690 Tomahawk',
         }),
-        expectedSsdts: ['SSDT-PLUG-ALT.aml', 'SSDT-AWAC.aml', 'SSDT-EC-USBX.aml'],
+        expectedSsdts: ['SSDT-PLUG-ALT.aml', 'SSDT-AWAC.aml', 'SSDT-EC-USBX.aml', 'SSDT-RHUB.aml'],
       },
       {
         name: 'Raptor Lake',
@@ -382,7 +382,7 @@ describe('getRequiredResources', () => {
           generation: 'Raptor Lake',
           motherboard: 'Gigabyte Z790 AORUS',
         }),
-        expectedSsdts: ['SSDT-PLUG-ALT.aml', 'SSDT-AWAC.aml', 'SSDT-EC-USBX.aml'],
+        expectedSsdts: ['SSDT-PLUG-ALT.aml', 'SSDT-AWAC.aml', 'SSDT-EC-USBX.aml', 'SSDT-RHUB.aml'],
       },
     ];
 
