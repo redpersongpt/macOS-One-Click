@@ -1724,7 +1724,7 @@ const KEXT_REGISTRY: Record<string, KextRegistryEntry> = {
   'SMCBatteryManager.kext':             { repo: 'acidanthera/VirtualSMC',              assetFilter: 'RELEASE' },
   'WhateverGreen.kext':                 { repo: 'acidanthera/WhateverGreen',           assetFilter: 'RELEASE' },
   'AppleALC.kext':                      { repo: 'acidanthera/AppleALC',                assetFilter: 'RELEASE' },
-  'NootedRed.kext':                     { repo: 'ChefKissInc/NootedRed',              assetFilter: 'RELEASE' },
+  'NootedRed.kext':                     { repo: 'ChefKissInc/NootedRed',               directUrl: 'https://nightly.link/ChefKissInc/NootedRed/workflows/main/master/Artifacts.zip', staticVersion: 'nightly' },
   'NootRX.kext':                        { repo: 'ChefKissInc/NootRX',                  directUrl: 'https://nightly.link/ChefKissInc/NootRX/workflows/main/master/Artifacts.zip', staticVersion: 'nightly' },
   'RTCMemoryFixup.kext':                { repo: 'acidanthera/RTCMemoryFixup',          assetFilter: 'RELEASE' },
   'VoodooPS2Controller.kext':           { repo: 'acidanthera/VoodooPS2',              assetFilter: 'RELEASE' },
@@ -2575,8 +2575,8 @@ async function fetchKextFromGitHub(
     return { name: kextName, version };
   } catch (err) {
     const msg = classifyError(err);
-    log('ERROR', 'kext', `Failed to fetch ${kextName}`, { error: msg });
-    throw new Error(`Failed to fetch ${kextName}: ${msg}`);
+    log('ERROR', 'kext', `Failed to fetch ${kextName}`, { error: msg.message });
+    throw new Error(`Failed to fetch ${kextName}: ${msg.message}`);
   }
 }
 
