@@ -138,7 +138,18 @@ export function classifyGpu(device: HardwareGpuDeviceSummary): GpuAssessment {
   const lower = name.toLowerCase();
   const vendor = resolveGpuVendor(name, device.vendorName);
 
-  if (lower.includes('microsoft remote display adapter') || lower.includes('microsoft basic display adapter') || lower.includes('remote display adapter') || lower.includes('basic display adapter') || lower.includes('render only') || lower.includes('indirect display')) {
+  // Software/remote display adapter — BUT only if vendor is not a real GPU vendor.
+  // "Microsoft Basic Display Adapter" with Intel/AMD/NVIDIA vendor ID means real
+  // hardware with a missing/generic driver (common on old office laptops).
+  const isSoftwareName = lower.includes('microsoft remote display adapter')
+    || lower.includes('remote display adapter')
+    || lower.includes('basic display adapter')
+    || lower.includes('render only')
+    || lower.includes('indirect display');
+  const vendorIdLower = device.vendorId?.toLowerCase() ?? '';
+  const hasRealGpuVendorId = vendorIdLower === '8086' || vendorIdLower === '10de' || vendorIdLower === '1002';
+
+  if (isSoftwareName && !hasRealGpuVendorId && vendor === 'Unknown') {
     return assessment(name, 'Unknown', 'unsupported', null, [
       'This is a software or remote display adapter, not a physical GPU. It is safely ignored.',
     ], { isLikelyDiscrete: false });

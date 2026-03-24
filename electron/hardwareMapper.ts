@@ -8,7 +8,7 @@
 import os from 'os';
 import type { DetectedHardware } from './hardwareDetect.js';
 import type { HardwareProfile } from './configGenerator.js';
-import { getSMBIOSForProfile } from './configGenerator.js';
+import { getSMBIOSForProfile, resolveAudioLayoutId } from './configGenerator.js';
 
 export function detectCpuGeneration(cpuModel: string): HardwareProfile['generation'] {
   const model = cpuModel.toLowerCase();
@@ -101,6 +101,11 @@ export function mapDetectedToProfile(hw: DetectedHardware): HardwareProfile {
     scanConfidence = 'medium';
   }
 
+  // Resolve audio codec from detected audio devices
+  const primaryAudio = hw.audioDevices?.find(a => a.codecName !== null);
+  const audioCodec = primaryAudio?.codecName ?? undefined;
+  const audioLayoutId = resolveAudioLayoutId(audioCodec);
+
   const profile: HardwareProfile = {
     cpu: cpuModel,
     architecture,
@@ -121,7 +126,8 @@ export function mapDetectedToProfile(hw: DetectedHardware): HardwareProfile {
     bootArgs: '-v keepsyms=1 debug=0x100',
     isLaptop: hw.isLaptop,
     isVM: hw.isVM,
-    audioLayoutId: 1,
+    audioCodec,
+    audioLayoutId,
     scanConfidence,
   };
   profile.smbios = getSMBIOSForProfile(profile);

@@ -25,6 +25,18 @@ export interface CpuInfo {
   confidence: DetectionConfidence;
 }
 
+export interface AudioDevice {
+  /** Raw device name from OS */
+  name: string;
+  /** PnP vendor ID, e.g. "10ec" for Realtek */
+  vendorId: string | null;
+  /** PnP device ID, e.g. "0282" for ALC282 */
+  deviceId: string | null;
+  /** Resolved codec name, e.g. "ALC282" */
+  codecName: string | null;
+  confidence: DetectionConfidence;
+}
+
 export interface DetectedHardware {
   cpu: CpuInfo;
   gpus: GpuDevice[];
@@ -35,6 +47,7 @@ export interface DetectedHardware {
   coreCount: number;
   isLaptop: boolean;
   isVM: boolean;
+  audioDevices: AudioDevice[];
 }
 
 // ── PCI vendor ID map (GPU vendors relevant to Hackintosh) ────────────────────
@@ -47,6 +60,53 @@ const GPU_VENDOR_MAP: Record<string, string> = {
   '15ad': 'VMware',
   '1234': 'QEMU',
 };
+
+/** PCI vendor IDs that correspond to real physical GPU hardware */
+const REAL_GPU_VENDORS = new Set(['8086', '10de', '1002']);
+
+// ── HDA audio vendor/device mapping ──────────────────────────────────────────
+// Realtek HDA device IDs → ALC codec names (most common in office laptops/desktops)
+// Source: HD Audio Device IDs cross-referenced with AppleALC supported codecs wiki
+
+const HDA_VENDOR_MAP: Record<string, string> = {
+  '10ec': 'Realtek',
+  '14f1': 'Conexant',
+  '111d': 'IDT',
+  '8384': 'SigmaTel',
+  '1013': 'Cirrus Logic',
+  '8086': 'Intel HDMI',
+};
+
+const REALTEK_DEVICE_TO_CODEC: Record<string, string> = {
+  '0215': 'ALC215', '0221': 'ALC221', '0222': 'ALC222', '0225': 'ALC225',
+  '0230': 'ALC230', '0233': 'ALC233', '0235': 'ALC235', '0236': 'ALC236',
+  '0245': 'ALC245', '0255': 'ALC255', '0256': 'ALC256', '0257': 'ALC257',
+  '0260': 'ALC260', '0262': 'ALC262', '0268': 'ALC268', '0269': 'ALC269',
+  '0270': 'ALC270', '0272': 'ALC272', '0274': 'ALC274', '0275': 'ALC275',
+  '0280': 'ALC280', '0282': 'ALC282', '0283': 'ALC283', '0284': 'ALC284',
+  '0285': 'ALC285', '0286': 'ALC286', '0288': 'ALC288', '0289': 'ALC289',
+  '0290': 'ALC290', '0292': 'ALC292', '0293': 'ALC293', '0294': 'ALC294',
+  '0295': 'ALC295', '0298': 'ALC298', '0299': 'ALC299',
+  '0662': 'ALC662', '0663': 'ALC663', '0668': 'ALC668',
+  '0670': 'ALC670', '0671': 'ALC671', '0700': 'ALC700',
+  '0882': 'ALC882', '0883': 'ALC883', '0885': 'ALC885', '0887': 'ALC887',
+  '0888': 'ALC888', '0889': 'ALC889', '0891': 'ALC891', '0892': 'ALC892',
+  '0897': 'ALC897', '0898': 'ALC898', '0899': 'ALC899',
+  '0b00': 'ALC1200', '0b50': 'ALC1220',
+};
+
+export function resolveAudioCodec(vendorId: string | null, deviceId: string | null): string | null {
+  if (!vendorId || !deviceId) return null;
+  const vid = vendorId.toLowerCase();
+  const did = deviceId.toLowerCase();
+
+  if (vid === '10ec') {
+    return REALTEK_DEVICE_TO_CODEC[did] ?? `Realtek (DEV_${did.toUpperCase()})`;
+  }
+  const vendorName = HDA_VENDOR_MAP[vid];
+  if (vendorName) return `${vendorName} (DEV_${did.toUpperCase()})`;
+  return null;
+}
 
 export function resolveGpuVendor(vendorId: string | null, rawName: string): string {
   if (vendorId) {
@@ -65,7 +125,14 @@ function pickFallbackCpuName(): string {
   return os.cpus()[0]?.model?.trim() || 'Unknown CPU';
 }
 
-function isSoftwareDisplayAdapter(gpu: GpuDevice): boolean {
+export function isSoftwareDisplayAdapter(gpu: GpuDevice): boolean {
+  // If PCI vendor ID belongs to a real GPU vendor (Intel, NVIDIA, AMD), this is
+  // physical hardware running with a generic/missing driver — not a software adapter.
+  // Common case: old laptops with missing Intel GPU driver show "Microsoft Basic
+  // Display Adapter" but PNPDeviceID still contains VEN_8086 (real Intel hardware).
+  if (gpu.vendorId && REAL_GPU_VENDORS.has(gpu.vendorId.toLowerCase())) {
+    return false;
+  }
   const name = gpu.name.toLowerCase();
   return gpu.vendorId === '1414'
     || name.includes('remote display adapter')
@@ -78,6 +145,83 @@ export function normalizeWindowsGpuList(gpus: GpuDevice[]): GpuDevice[] {
   const filtered = gpus.filter((gpu) => !isSoftwareDisplayAdapter(gpu));
   if (filtered.length > 0) return filtered;
   return gpus;
+}
+
+// ── Intel iGPU inference from CPU name ──────────────────────────────────────
+
+/**
+ * When the only GPU is a generic adapter (e.g. "Microsoft Basic Display Adapter")
+ * but PCI vendor ID is Intel (8086), infer the iGPU family from the CPU generation.
+ * Returns a descriptive name that classifyGpu can use for support tier assessment.
+ *
+ * This does NOT invent fake precision — it maps to the iGPU generation/family,
+ * not a specific model SKU.
+ */
+export function inferIntelIgpuName(cpuName: string): string | null {
+  const model = cpuName.toLowerCase();
+
+  // Standard Core i-series
+  const match = model.match(/i\d-?\s?(1?\d{4})/);
+  if (match) {
+    const num = parseInt(match[1]);
+    if (num >= 12000) return 'Intel UHD Graphics (12th Gen+)';
+    if (num >= 11000) return 'Intel UHD Graphics (11th Gen)';
+    if (num >= 10000) return 'Intel UHD Graphics 630';
+    if (num >= 8000) return 'Intel UHD Graphics 630';
+    if (num >= 7000) return 'Intel HD Graphics 620/630';
+    if (num >= 6000) return 'Intel HD Graphics 520/530';
+    if (num >= 5000) return 'Intel HD Graphics 5500/6000';
+    if (num >= 4000) return 'Intel HD Graphics 4400/4600';
+    if (num >= 3000) return 'Intel HD Graphics 4000';
+    if (num >= 2000) return 'Intel HD Graphics 2000/3000';
+  }
+
+  // Legacy Core i-series (3-digit model numbers)
+  const legacyMatch = model.match(/i[357]-?\s*(\d{3,4})([a-z]{0,2})/);
+  if (legacyMatch) {
+    const num = parseInt(legacyMatch[1], 10);
+    if (num >= 600 && num < 1000) return 'Intel HD Graphics (1st Gen)';
+    if (num >= 400 && num < 600) return 'Intel HD Graphics (1st Gen)';
+  }
+
+  // Pentium/Celeron
+  if (model.includes('pentium') || model.includes('celeron')) {
+    return 'Intel HD Graphics (budget)';
+  }
+
+  return null;
+}
+
+/**
+ * Enhance generic GPU adapter names when real hardware PCI IDs are present.
+ * This replaces uninformative names like "Microsoft Basic Display Adapter" with
+ * CPU-inferred Intel iGPU family names for better classification downstream.
+ */
+export function enhanceGenericGpuNames(gpus: GpuDevice[], cpuName: string): GpuDevice[] {
+  return gpus.map(gpu => {
+    const name = gpu.name.toLowerCase();
+    const isGenericName = name.includes('basic display adapter')
+      || name.includes('standard vga')
+      || name === 'unknown gpu';
+
+    if (!isGenericName) return gpu;
+    if (gpu.vendorId?.toLowerCase() !== '8086') return gpu;
+
+    // Real Intel hardware with generic driver — infer iGPU name from CPU
+    const inferredName = inferIntelIgpuName(cpuName);
+    if (inferredName) {
+      return {
+        ...gpu,
+        name: `${inferredName} (driver not installed)`,
+        confidence: 'partially-detected' as const,
+      };
+    }
+    return {
+      ...gpu,
+      name: 'Intel iGPU (driver not installed)',
+      confidence: 'partially-detected' as const,
+    };
+  });
 }
 
 function resolveCpuVendor(vendorStr: string, rawName: string): { vendor: string; vendorName: string } {
@@ -103,6 +247,7 @@ export const WINDOWS_HARDWARE_QUERIES = {
   model: '(Get-CimInstance CIM_ComputerSystem).Model',
   batteryJson: 'Get-CimInstance Win32_Battery | Select-Object -First 1 | ConvertTo-Json -Compress',
   coreCount: '(Get-CimInstance CIM_Processor).NumberOfCores',
+  audioJson: "Get-CimInstance Win32_PnPEntity -Filter \"PNPClass='MEDIA'\" | Select-Object Name, PNPDeviceID | ConvertTo-Json -Compress",
 } as const;
 
 // ── Windows ───────────────────────────────────────────────────────────────────
@@ -124,9 +269,10 @@ export async function detectWindowsHardware(): Promise<DetectedHardware> {
     ps(WINDOWS_HARDWARE_QUERIES.manufacturer, '', 6_000),
     ps(WINDOWS_HARDWARE_QUERIES.coreCount, '', 8_000),
   ]);
-  const [modelRes, batteryRes] = await Promise.all([
+  const [modelRes, batteryRes, audioRes] = await Promise.all([
     ps(WINDOWS_HARDWARE_QUERIES.model, '', 3_500),
     ps(WINDOWS_HARDWARE_QUERIES.batteryJson, '', 3_500),
+    ps(WINDOWS_HARDWARE_QUERIES.audioJson, '', 6_000),
   ]);
 
   const cpuName = cpuRes.stdout.trim().split('\n')[0] || pickFallbackCpuName();
@@ -161,6 +307,30 @@ export async function detectWindowsHardware(): Promise<DetectedHardware> {
     gpus = [{ name: 'Unknown GPU', vendorId: null, deviceId: null, vendorName: 'Unknown', confidence: 'unverified' }];
   }
   gpus = normalizeWindowsGpuList(gpus);
+  // Enhance generic adapter names (e.g. "Microsoft Basic Display Adapter" with Intel PCI ID)
+  gpus = enhanceGenericGpuNames(gpus, cpuName);
+
+  // Audio — parse PnP entity list for HDA audio devices with vendor/device IDs
+  const audioDevices: AudioDevice[] = [];
+  try {
+    const rawAudio = JSON.parse(audioRes.stdout.trim());
+    const audioEntries = Array.isArray(rawAudio) ? rawAudio : [rawAudio];
+    for (const entry of audioEntries.filter(Boolean)) {
+      const pnp: string = entry.PNPDeviceID ?? '';
+      const venMatch = pnp.match(/VEN_([0-9A-Fa-f]{4})/);
+      const devMatch = pnp.match(/DEV_([0-9A-Fa-f]{4})/);
+      const audioVendorId = venMatch ? venMatch[1].toLowerCase() : null;
+      const audioDeviceId = devMatch ? devMatch[1].toLowerCase() : null;
+      const codecName = resolveAudioCodec(audioVendorId, audioDeviceId);
+      audioDevices.push({
+        name: entry.Name ?? 'Unknown Audio Device',
+        vendorId: audioVendorId,
+        deviceId: audioDeviceId,
+        codecName,
+        confidence: audioVendorId ? 'detected' as const : 'partially-detected' as const,
+      });
+    }
+  } catch { /* audio detection is best-effort */ }
 
   // Board
   let boardVendor = 'Unknown', boardModel = 'Unknown';
@@ -196,6 +366,7 @@ export async function detectWindowsHardware(): Promise<DetectedHardware> {
     coreCount,
     isLaptop,
     isVM,
+    audioDevices,
   };
 }
 
@@ -208,7 +379,7 @@ export async function detectLinuxHardware(): Promise<DetectedHardware> {
       maxBuffer: 1024 * 1024,
     }).catch(() => ({ stdout: fallback }));
 
-  const [cpuRes, gpuRes, boardVendorRes, boardModelRes, chassisRes, sysVendorRes, batteryRes, memRes] = await Promise.all([
+  const [cpuRes, gpuRes, boardVendorRes, boardModelRes, chassisRes, sysVendorRes, batteryRes, memRes, audioRes] = await Promise.all([
     run('cat /proc/cpuinfo'),
     run('lspci -nn 2>/dev/null | grep -iE "VGA|3D|Display"'),
     run('cat /sys/class/dmi/id/board_vendor 2>/dev/null'),
@@ -217,6 +388,7 @@ export async function detectLinuxHardware(): Promise<DetectedHardware> {
     run('cat /sys/class/dmi/id/sys_vendor 2>/dev/null'),
     run('ls /sys/class/power_supply 2>/dev/null | grep -E "^BAT"'),
     run('grep MemTotal /proc/meminfo'),
+    run('lspci -nn 2>/dev/null | grep -iE "audio|HDA"'),
   ]);
 
   // CPU
@@ -255,6 +427,25 @@ export async function detectLinuxHardware(): Promise<DetectedHardware> {
   const sysVendor = sysVendorRes.stdout.trim().toLowerCase();
   const isVM = /vmware|qemu|innotek|microsoft|parallels|xen/i.test(sysVendor);
 
+  // Audio — parse lspci HDA entries for vendor:device IDs
+  const audioDevices: AudioDevice[] = [];
+  const audioLines = audioRes.stdout.trim().split('\n').filter(Boolean);
+  for (const line of audioLines) {
+    const idMatch = line.match(/\[([0-9a-f]{4}):([0-9a-f]{4})\]/i);
+    const audioVendorId = idMatch ? idMatch[1].toLowerCase() : null;
+    const audioDeviceId = idMatch ? idMatch[2].toLowerCase() : null;
+    const nameMatch = line.match(/\]:\s*(.+?)(?:\s*\[[0-9a-f]{4}:[0-9a-f]{4}\])?(?:\s*\(rev|$)/i);
+    const audioName = nameMatch ? nameMatch[1].trim() : 'Unknown Audio Device';
+    const codecName = resolveAudioCodec(audioVendorId, audioDeviceId);
+    audioDevices.push({
+      name: audioName,
+      vendorId: audioVendorId,
+      deviceId: audioDeviceId,
+      codecName,
+      confidence: audioVendorId ? 'detected' as const : 'partially-detected' as const,
+    });
+  }
+
   return {
     cpu: { name: cpuName, vendor, vendorName, confidence: vendor !== 'Unknown' ? 'detected' : 'unverified' },
     gpus,
@@ -265,6 +456,7 @@ export async function detectLinuxHardware(): Promise<DetectedHardware> {
     coreCount: os.cpus().length,
     isLaptop,
     isVM,
+    audioDevices,
   };
 }
 
@@ -277,12 +469,13 @@ export async function detectMacHardware(): Promise<DetectedHardware> {
       maxBuffer: 1024 * 1024,
     }).catch(() => ({ stdout: fallback }));
 
-  const [cpuRes, cpuVendorRes, gpuRes, memRes, modelRes] = await Promise.all([
+  const [cpuRes, cpuVendorRes, gpuRes, memRes, modelRes, audioRes] = await Promise.all([
     run('sysctl -n machdep.cpu.brand_string'),
     run('sysctl -n machdep.cpu.vendor 2>/dev/null'),
     run("system_profiler SPDisplaysDataType 2>/dev/null | grep -E 'Chipset Model|Vendor ID|Device ID'"),
     run('sysctl -n hw.memsize'),
     run('system_profiler SPHardwareDataType 2>/dev/null | grep -E "Model Identifier|Model Name"'),
+    run("system_profiler SPAudioDataType 2>/dev/null | grep -E 'Device Name|Manufacturer'"),
   ]);
 
   const cpuName = cpuRes.stdout.trim() || 'Unknown CPU';
@@ -321,6 +514,22 @@ export async function detectMacHardware(): Promise<DetectedHardware> {
   const modelName = (modelLines.find(l => l.startsWith('Model Name')) ?? '').split(':')[1]?.trim() || 'Unknown Mac';
   const isLaptop = modelId.toLowerCase().includes('book') || modelName.toLowerCase().includes('book');
 
+  // Audio — best-effort from system_profiler
+  const audioDevices: AudioDevice[] = [];
+  const audioLines = audioRes.stdout.split('\n').map(l => l.trim());
+  for (const line of audioLines) {
+    if (line.startsWith('Device Name:')) {
+      const audioName = line.split(':')[1]?.trim() || 'Unknown Audio Device';
+      audioDevices.push({
+        name: audioName,
+        vendorId: null,
+        deviceId: null,
+        codecName: null,
+        confidence: 'partially-detected',
+      });
+    }
+  }
+
   return {
     cpu: { name: cpuName, vendor, vendorName, confidence: vendor !== 'Unknown' ? 'detected' : 'unverified' },
     gpus,
@@ -331,6 +540,7 @@ export async function detectMacHardware(): Promise<DetectedHardware> {
     coreCount: os.cpus().length,
     isLaptop,
     isVM: false,
+    audioDevices,
   };
 }
 

@@ -62,6 +62,11 @@ export interface BoardInterpretation {
   formFactor: InterpretedFact;
 }
 
+export interface AudioInterpretation {
+  codec: InterpretedFact;
+  layoutId: InterpretedFact;
+}
+
 export interface HardwareInterpretation {
   /** Overall interpretation confidence */
   overallConfidence: 'high' | 'medium' | 'low';
@@ -74,6 +79,7 @@ export interface HardwareInterpretation {
   primaryGpu: GpuInterpretation;
   allGpus: GpuInterpretation[];
   board: BoardInterpretation;
+  audio: AudioInterpretation;
   ram: InterpretedFact;
   vmDetected: InterpretedFact;
 }
@@ -444,6 +450,46 @@ export function interpretHardware(hw: DetectedHardware): HardwareInterpretation 
     },
   };
 
+  // ── Audio ──
+  const primaryAudio = hw.audioDevices?.find(a => a.codecName !== null);
+  const audioCodecValue = primaryAudio?.codecName ?? 'Not detected';
+  const audioCodecBasis: InterpretationBasis = primaryAudio
+    ? (primaryAudio.vendorId ? 'detected' : 'inferred')
+    : 'unknown';
+
+  if (audioCodecBasis === 'unknown') {
+    manualVerify.push('Audio codec was not detected — layout-id defaults to 1 (may not match your hardware)');
+  } else if (audioCodecBasis === 'inferred') {
+    manualVerify.push(`Audio codec (${audioCodecValue}) was inferred — verify in AppleALC supported codecs list`);
+  }
+
+  const audioInterp: AudioInterpretation = {
+    codec: {
+      label: 'Audio Codec',
+      value: audioCodecValue,
+      basis: audioCodecBasis,
+      reasoning: primaryAudio
+        ? primaryAudio.vendorId
+          ? `Detected HDA vendor ${primaryAudio.vendorId}:${primaryAudio.deviceId} from PnP enumeration. Resolved to ${audioCodecValue}.`
+          : `Audio device "${primaryAudio.name}" found but vendor/device IDs not available.`
+        : 'No audio devices detected by hardware scan.',
+      verifyHint: audioCodecBasis !== 'detected'
+        ? 'Check your audio codec in Device Manager (Windows) or codec dump tools. The layout-id in config.plist depends on this.'
+        : null,
+    },
+    layoutId: {
+      label: 'Audio Layout ID',
+      value: primaryAudio?.codecName
+        ? `Mapped from ${primaryAudio.codecName}`
+        : '1 (universal fallback)',
+      basis: primaryAudio?.codecName ? 'derived' : 'inferred',
+      reasoning: primaryAudio?.codecName
+        ? `Layout-ID derived from codec ${primaryAudio.codecName} using AppleALC supported codecs table.`
+        : 'Using universal fallback layout-id=1 — works on most hardware but may not enable all outputs.',
+      verifyHint: 'If audio does not work after install, try different layout-id values from the AppleALC wiki',
+    },
+  };
+
   // ── RAM ──
   const ramGB = Math.round(hw.ramBytes / 1024 / 1024 / 1024);
   const ramInterp: InterpretedFact = {
@@ -524,6 +570,7 @@ export function interpretHardware(hw: DetectedHardware): HardwareInterpretation 
     primaryGpu: primaryGpuInterp,
     allGpus: allGpuInterps,
     board: boardInterp,
+    audio: audioInterp,
     ram: ramInterp,
     vmDetected: vmInterp,
   };
