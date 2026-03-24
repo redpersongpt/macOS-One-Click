@@ -124,10 +124,10 @@ describe('Benchmark: SMBIOS correctness', () => {
   });
 
   // Ice Lake laptop
-  it('Ice Lake laptop → MacBookPro16,2', () => {
+  it('Ice Lake laptop → MacBookAir9,1 (Dortania primary recommendation)', () => {
     expect(getSMBIOSForProfile(profile({
       generation: 'Ice Lake', isLaptop: true, targetOS: 'macOS Ventura',
-    }))).toBe('MacBookPro16,2');
+    }))).toBe('MacBookAir9,1');
   });
 });
 
@@ -273,33 +273,33 @@ describe('Benchmark: Quirk policy correctness', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe('Benchmark: SIP policy intelligence', () => {
-  it('Standard supported GPU path → 0x67 (Dortania minimum)', () => {
+  it('Standard supported GPU path → SIP enabled (Dortania standard)', () => {
     const sip = getSIPPolicy(
       profile({ targetOS: 'macOS Ventura' }),
       [{ name: 'AMD Radeon RX 580' }],
     );
-    expect(sip.value).toBe('ZwAAAA=='); // 0x67
+    expect(sip.value).toBe('AAAAAA=='); // 0x00000000 — SIP enabled
   });
 
-  it('Fully supported Intel iGPU → 0x67', () => {
+  it('Fully supported Intel iGPU → SIP enabled', () => {
     const sip = getSIPPolicy(
       profile({ targetOS: 'macOS Ventura' }),
       [{ name: 'Intel UHD 630' }],
     );
-    expect(sip.value).toBe('ZwAAAA==');
+    expect(sip.value).toBe('AAAAAA==');
   });
 
-  it('Standard AMD build → 0x67', () => {
+  it('Standard AMD build → SIP enabled', () => {
     const sip = getSIPPolicy(
       profile({ architecture: 'AMD', generation: 'Ryzen', targetOS: 'macOS Ventura' }),
       [{ name: 'AMD Radeon RX 6800 XT' }],
     );
-    expect(sip.value).toBe('ZwAAAA==');
+    expect(sip.value).toBe('AAAAAA==');
   });
 
   it('SIP value appears in generated plist', () => {
     const plist = generateConfigPlist(profile({ targetOS: 'macOS Ventura 13' }));
-    expect(plist).toContain('ZwAAAA=='); // 0x67 not 0xFFF
+    expect(plist).toContain('AAAAAA=='); // SIP enabled (Dortania standard)
     expect(plist).not.toContain('/w8AAA=='); // old full-disable
   });
 });

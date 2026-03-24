@@ -47,11 +47,12 @@ export function getSIPPolicy(profile: HardwareProfile, gpuDevices: HardwareGpuDe
         };
     }
 
-    // Standard Hackintosh: Dortania-recommended minimum
-    // 0x67 = kexts + FS + DTRACE + NVRAM
+    // Standard Hackintosh: Dortania-recommended SIP enabled
+    // OpenCore loads kexts before macOS boots, so SIP does not block them.
+    // 0x00000000 = full SIP protection (Dortania default for all platforms)
     return {
-        value: 'ZwAAAA==', // 0x00000067 little-endian
-        reason: 'Standard SIP policy — allows unsigned kexts and NVRAM writes',
+        value: 'AAAAAA==', // 0x00000000
+        reason: 'SIP enabled — Dortania standard (OpenCore kexts load before macOS)',
     };
 }
 
@@ -96,6 +97,7 @@ interface Quirks {
     DevirtualiseMmio: boolean;
     EnableSafeModeSlide: boolean;
     EnableWriteUnprotector: boolean;
+    ProtectMemoryRegions: boolean;
     ProtectUefiServices: boolean;
     ProvideCustomSlide: boolean;
     RebuildAppleMemoryMap: boolean;
@@ -115,6 +117,7 @@ interface Quirks {
     XhciPortLimit: boolean;
 
     // UEFI
+    IgnoreInvalidFlexRatio: boolean;
     RequestBootVarRouting: boolean;
     ReleaseUsbOwnership: boolean;
     UnblockFsConnect: boolean;
@@ -125,6 +128,7 @@ const BASE_QUIRKS: Quirks = {
     DevirtualiseMmio: false,
     EnableSafeModeSlide: true,
     EnableWriteUnprotector: false,
+    ProtectMemoryRegions: false,
     ProtectUefiServices: false,
     ProvideCustomSlide: true,
     RebuildAppleMemoryMap: true,
@@ -142,6 +146,7 @@ const BASE_QUIRKS: Quirks = {
     ProvideCurrentCpuInfo: false,
     XhciPortLimit: false,
 
+    IgnoreInvalidFlexRatio: false,
     RequestBootVarRouting: true,
     ReleaseUsbOwnership: true,
     UnblockFsConnect: false
@@ -213,7 +218,7 @@ export function getSMBIOSForProfile(profile: HardwareProfile): string {
             case 'Skylake': return osVer >= 13 ? 'MacBookPro14,1' : 'MacBookPro13,1';
             case 'Kaby Lake': return 'MacBookPro14,1';
             case 'Coffee Lake': return 'MacBookPro15,2';
-            case 'Ice Lake': return 'MacBookPro16,2';
+            case 'Ice Lake': return 'MacBookAir9,1'; // Source: Dortania icelake.html primary recommendation
             case 'Comet Lake':
             case 'Rocket Lake':
             case 'Alder Lake':
@@ -222,11 +227,15 @@ export function getSMBIOSForProfile(profile: HardwareProfile): string {
         }
     }
 
-    // Server / HEDT
+    // Server / HEDT — Source: Dortania config-HEDT per-gen pages
     if (profile.generation.includes('-E') || profile.generation.includes('-X')) {
-        // Haswell-E / Broadwell-E / Ivy Bridge-E / Cascade Lake-X
-        if (osVer >= 13) return 'MacPro7,1';
-        return 'MacPro6,1';
+        // Ivy Bridge-E: MacPro6,1 — Source: Dortania config-HEDT/ivy-bridge-e.html
+        if (profile.generation === 'Ivy Bridge-E') {
+            return osVer >= 13 ? 'MacPro7,1' : 'MacPro6,1';
+        }
+        // Haswell-E / Broadwell-E / Cascade Lake-X: iMacPro1,1
+        // Source: Dortania config-HEDT/haswell-e.html, broadwell-e.html, skylake-x.html
+        return 'iMacPro1,1';
     }
 
     // Desktop
@@ -244,7 +253,8 @@ export function getSMBIOSForProfile(profile: HardwareProfile): string {
             // Monterey: MacPro6,1 for dGPU. Ventura: iMac18,x
             return osVer >= 13 ? (hasDiscreteDisplayPath ? 'iMac18,2' : 'iMac18,1') : (osVer >= 12 ? (hasDiscreteDisplayPath ? 'MacPro6,1' : 'iMac16,2') : 'iMac13,2');
         case 'Haswell':
-            return osVer >= 13 ? (hasDiscreteDisplayPath ? 'iMac18,2' : 'iMac18,1') : (osVer >= 12 ? (hasDiscreteDisplayPath ? 'iMac17,1' : 'iMac16,2') : 'iMac14,4');
+            // Source: Dortania haswell.html — iMac15,1 (dGPU), iMac14,4 (iGPU)
+            return osVer >= 13 ? (hasDiscreteDisplayPath ? 'iMac18,2' : 'iMac18,1') : (hasDiscreteDisplayPath ? 'iMac15,1' : 'iMac14,4');
         case 'Broadwell': return osVer >= 13 ? (hasDiscreteDisplayPath ? 'iMac18,2' : 'iMac18,1') : 'iMac16,2';
         case 'Skylake': return osVer >= 13 ? (hasDiscreteDisplayPath ? 'iMac18,2' : 'iMac18,1') : 'iMac17,1';
         case 'Kaby Lake': return hasDiscreteDisplayPath ? 'iMac18,3' : 'iMac18,1';
@@ -259,7 +269,7 @@ export function getSMBIOSForProfile(profile: HardwareProfile): string {
 
 // --- Quirks by Generation ---
 
-export function getQuirksForGeneration(gen: HardwareProfile['generation'], motherboard: string = '', isVM: boolean = false, strategy: HardwareProfile['strategy'] = 'canonical', targetOS: string = ''): Quirks {
+export function getQuirksForGeneration(gen: HardwareProfile['generation'], motherboard: string = '', isVM: boolean = false, strategy: HardwareProfile['strategy'] = 'canonical', targetOS: string = '', isLaptop: boolean = false): Quirks {
     const quirks = { ...BASE_QUIRKS };
     const mb = motherboard.toLowerCase();
 
@@ -287,9 +297,11 @@ export function getQuirksForGeneration(gen: HardwareProfile['generation'], mothe
         case 'Sandy Bridge':
         case 'Ivy Bridge':
             // Legacy firmware — use EnableWriteUnprotector instead of RebuildAppleMemoryMap
+            // Source: Dortania sandy-bridge.html, ivy-bridge.html
             quirks.EnableWriteUnprotector = true;
             quirks.RebuildAppleMemoryMap = false;
             quirks.SyncRuntimePermissions = false;
+            quirks.IgnoreInvalidFlexRatio = true;
             // Pre-Sandy Bridge uses AppleIntelCPUPowerManagement, not XCPM
             if (['Penryn', 'Wolfdale', 'Yorkfield', 'Nehalem', 'Westmere', 'Arrandale', 'Clarkdale'].includes(gen)) {
                 quirks.AppleXcpmCfgLock = false;
@@ -298,34 +310,58 @@ export function getQuirksForGeneration(gen: HardwareProfile['generation'], mothe
         case 'Haswell':
         case 'Broadwell':
             // Moderate era — EnableWriteUnprotector still preferred for most boards
+            // Source: Dortania haswell.html
             quirks.EnableWriteUnprotector = true;
             quirks.RebuildAppleMemoryMap = false;
             quirks.SyncRuntimePermissions = false;
+            quirks.IgnoreInvalidFlexRatio = true;
             // Haswell/Broadwell desktop: AppleCpuPmCfgLock not needed (XCPM only)
             quirks.AppleCpuPmCfgLock = false;
             break;
         case 'Skylake':
         case 'Kaby Lake':
-        case 'Ice Lake':
             // Moderate era — EnableWriteUnprotector still preferred for most boards
+            // Source: Dortania skylake.html, kaby-lake.html
             quirks.EnableWriteUnprotector = true;
             quirks.RebuildAppleMemoryMap = false;
             quirks.SyncRuntimePermissions = false;
-            // Skylake+ only needs XCPM lock, not legacy AppleCpuPm
+            quirks.AppleCpuPmCfgLock = false;
+            break;
+        case 'Ice Lake':
+            // Modern laptop platform — Source: Dortania icelake.html
+            quirks.EnableWriteUnprotector = false;
+            quirks.DevirtualiseMmio = true;
+            quirks.ProtectMemoryRegions = true;
+            quirks.ProtectUefiServices = true;
+            quirks.RebuildAppleMemoryMap = true;
+            quirks.SyncRuntimePermissions = true;
             quirks.AppleCpuPmCfgLock = false;
             break;
         case 'Ivy Bridge-E':
-        case 'Haswell-E':
-        case 'Broadwell-E':
-            // HEDT (X99) — legacy firmware + AppleXcpmExtraMsrs for extra MSRs
+            // HEDT (X79) — legacy firmware, pre-XCPM era
+            // Source: Dortania config-HEDT/ivy-bridge-e.html
             quirks.EnableWriteUnprotector = true;
             quirks.RebuildAppleMemoryMap = false;
             quirks.SyncRuntimePermissions = false;
+            quirks.IgnoreInvalidFlexRatio = true;
+            quirks.AppleXcpmExtraMsrs = true;
+            // Ivy Bridge-E uses AppleCpuPm (pre-XCPM) — needs BOTH quirks
+            quirks.AppleCpuPmCfgLock = true;
+            break;
+        case 'Haswell-E':
+        case 'Broadwell-E':
+            // HEDT (X99) — legacy firmware + AppleXcpmExtraMsrs
+            // Source: Dortania config-HEDT/haswell-e.html, broadwell-e.html
+            quirks.EnableWriteUnprotector = true;
+            quirks.RebuildAppleMemoryMap = false;
+            quirks.SyncRuntimePermissions = false;
+            quirks.IgnoreInvalidFlexRatio = true;
             quirks.AppleXcpmExtraMsrs = true;
             quirks.AppleCpuPmCfgLock = false;
             break;
         case 'Cascade Lake-X':
             // HEDT (X299) — modern firmware
+            // Source: Dortania config-HEDT/skylake-x.html
             quirks.EnableWriteUnprotector = false;
             quirks.DevirtualiseMmio = true;
             quirks.ProtectUefiServices = true;
@@ -337,30 +373,28 @@ export function getQuirksForGeneration(gen: HardwareProfile['generation'], mothe
             break;
         case 'Coffee Lake':
             // 2018+ firmware — use RebuildAppleMemoryMap approach
+            // Source: Dortania coffee-lake.html
             quirks.EnableWriteUnprotector = false;
             quirks.RebuildAppleMemoryMap = true;
             quirks.SyncRuntimePermissions = true;
             quirks.DevirtualiseMmio = true;
             quirks.AppleCpuPmCfgLock = false;
-            // Z390 needs SetupVirtualMap true (older), Z370 too
             quirks.SetupVirtualMap = true;
-            // Z390/Z370 boards need ProtectUefiServices — Source: config.plist/coffee-lake.html
-            if (mb.includes('z390') || mb.includes('z370')) {
+            // Z390 boards need ProtectUefiServices — Source: config.plist/coffee-lake.html
+            if (mb.includes('z390')) {
                 quirks.ProtectUefiServices = true;
             }
             break;
         case 'Comet Lake':
+            // Source: Dortania comet-lake.html
             quirks.EnableWriteUnprotector = false;
             quirks.RebuildAppleMemoryMap = true;
             quirks.SyncRuntimePermissions = true;
             quirks.DevirtualiseMmio = true;
             quirks.AppleCpuPmCfgLock = false;
+            quirks.ProtectUefiServices = true;
             // Comet Lake memory protections break SetupVirtualMap — Source: Dortania comet-lake.html
             quirks.SetupVirtualMap = false;
-            // Z490 needs ProtectUefiServices — Source: Dortania comet-lake.html
-            if (mb.includes('z490')) {
-                quirks.ProtectUefiServices = true;
-            }
             break;
         case 'Rocket Lake':
         case 'Alder Lake':
@@ -375,8 +409,20 @@ export function getQuirksForGeneration(gen: HardwareProfile['generation'], mothe
             quirks.AppleCpuPmCfgLock = false;
             break;
         case 'Bulldozer':
+            // AMD FX/APU (15h/16h) — legacy Booter quirks
+            // Source: Dortania AMD/fx.html
+            quirks.EnableWriteUnprotector = true;
+            quirks.RebuildAppleMemoryMap = false;
+            quirks.SyncRuntimePermissions = false;
+            quirks.SetupVirtualMap = true;
+            quirks.AppleCpuPmCfgLock = false;
+            quirks.AppleXcpmCfgLock = false;
+            quirks.ProvideCurrentCpuInfo = true;
+            break;
         case 'Ryzen':
         case 'Threadripper':
+            // AMD Zen (17h/19h) — modern Booter quirks
+            // Source: Dortania AMD/zen.html
             quirks.EnableWriteUnprotector = false;
             quirks.DevirtualiseMmio = false;
             quirks.RebuildAppleMemoryMap = true;
@@ -437,6 +483,11 @@ export function getQuirksForGeneration(gen: HardwareProfile['generation'], mothe
         if (needsFixup.includes(gen)) {
             quirks.FixupAppleEfiImages = true;
         }
+    }
+
+    // Laptop Skylake+ needs ProtectMemoryRegions — Source: Dortania laptop config.plist guides
+    if (isLaptop && ['Skylake', 'Kaby Lake', 'Coffee Lake', 'Comet Lake', 'Ice Lake'].includes(gen)) {
+        quirks.ProtectMemoryRegions = true;
     }
 
     return quirks;
@@ -676,17 +727,27 @@ export function getRequiredResources(profile: HardwareProfile) {
                 pushSsdt('SSDT-AWAC.aml');
             }
         } else if (['Ivy Bridge-E', 'Haswell-E', 'Broadwell-E', 'Cascade Lake-X'].includes(profile.generation)) {
-            // HEDT — SSDT-PLUG + SSDT-EC-USBX (X99/X299 have modern USB)
-            // Source: config.plist/config-HEDT
-            pushSsdt('SSDT-PLUG.aml');
-            pushSsdt('SSDT-EC-USBX.aml');
-            // Cascade Lake-X also needs SSDT-UNC — Source: Dortania HEDT guide
-            if (profile.generation === 'Cascade Lake-X') {
-                pushSsdt('SSDT-UNC.aml');
+            // HEDT — Source: Dortania config-HEDT per-gen pages
+            // Ivy Bridge-E uses legacy AppleIntelCPUPM (no XCPM) — no SSDT-PLUG
+            if (profile.generation !== 'Ivy Bridge-E') {
+                pushSsdt('SSDT-PLUG.aml');
+            }
+            // Haswell-E+ use USBX; Ivy Bridge-E uses plain EC
+            if (profile.generation === 'Ivy Bridge-E') {
+                pushSsdt('SSDT-EC.aml');
+            } else {
+                pushSsdt('SSDT-EC-USBX.aml');
+            }
+            // SSDT-UNC required for all X99/X299 HEDT — Source: Dortania HEDT guides
+            pushSsdt('SSDT-UNC.aml');
+            // Haswell-E/Broadwell-E: SSDT-RTC0-RANGE for RTC fix — Source: Dortania haswell-e.html
+            if (['Haswell-E', 'Broadwell-E'].includes(profile.generation)) {
+                pushSsdt('SSDT-RTC0-RANGE.aml');
             }
         } else if (['Sandy Bridge', 'Ivy Bridge'].includes(profile.generation)) {
-            // Sandy Bridge / Ivy Bridge — SSDT-PLUG (XCPM) + legacy EC, no USBX
-            pushSsdt('SSDT-PLUG.aml');
+            // Sandy Bridge / Ivy Bridge — NO SSDT-PLUG (these use AppleIntelCPUPM, not XCPM)
+            // SSDT-PM is generated post-install via ssdtPRGen.sh — not shipped in initial EFI.
+            // Source: Dortania sandy-bridge.html, ivy-bridge.html
             pushSsdt('SSDT-EC.aml');
         } else {
             // Pre-Sandy Bridge (Penryn/Nehalem/Westmere/etc) — no XCPM, EC only
@@ -712,7 +773,7 @@ const TAHOE_UNSUPPORTED_GENERATIONS = new Set<HardwareProfile['generation']>([
 ]);
 
 export function generateConfigPlist(profile: HardwareProfile): string {
-    const quirks = getQuirksForGeneration(profile.generation, profile.motherboard, profile.isVM, profile.strategy, profile.targetOS);
+    const quirks = getQuirksForGeneration(profile.generation, profile.motherboard, profile.isVM, profile.strategy, profile.targetOS, profile.isLaptop);
     const { kexts, ssdts } = getRequiredResources(profile);
     const osVer = parseMacOSVersion(profile.targetOS);
     const gpuDevices = getProfileGpuDevices(profile);
@@ -777,12 +838,18 @@ export function generateConfigPlist(profile: HardwareProfile): string {
     }
 
     // CPUID spoofing for unsupported Intel gens
-    let cpuid1Data = "AAAAAAAAAAAAAA==";
-    let cpuid1Mask = "AAAAAAAAAAAAAA==";
+    let cpuid1Data = "AAAAAAAAAAAAAAAAAAAA";
+    let cpuid1Mask = "AAAAAAAAAAAAAAAAAAAA";
     // Rocket Lake (11th gen) needs Comet Lake CPUID spoof — unsupported CPUID in macOS
     // Alder/Raptor Lake also need spoofing — Source: Dortania per-gen guides
     if (['Rocket Lake', 'Alder Lake', 'Raptor Lake'].includes(profile.generation)) {
         cpuid1Data = "VQYKAAAAAAAAAAAAAAAAAA==";
+        cpuid1Mask = "/////wAAAAAAAAAAAAAAAA==";
+    }
+    // Haswell-E needs CPUID spoof to Haswell desktop — Source: Dortania haswell-e.html
+    // Cpuid1Data: C3060300 + 12 zero bytes, Cpuid1Mask: FFFFFFFF + 12 zero bytes
+    if (profile.generation === 'Haswell-E') {
+        cpuid1Data = "wwYDAAAAAAAAAAAAAAAAAA==";
         cpuid1Mask = "/////wAAAAAAAAAAAAAAAA==";
     }
 
@@ -802,32 +869,38 @@ export function generateConfigPlist(profile: HardwareProfile): string {
         // Laptops ALWAYS use display ig-platform-ids (iGPU drives the panel).
         // These are completely different from desktop values.
         const LAPTOP_IDS: Record<string, string> = {
-            'Haswell':    'BgAmCg==', // 0x0A260006 — Haswell mobile (HD 4400/4600)
-            'Broadwell':  'BgAmFg==', // 0x16260006 — Broadwell mobile (HD 5500/6000)
-            'Skylake':    'AAAZYQ==', // 0x19160000 — Skylake mobile (HD 520/530)
-            'Kaby Lake':  'AABZYQ==', // 0x59160000 — Kaby Lake mobile (HD 620/630)
-            'Coffee Lake':'CQClPg==', // 0x3EA50009 — Coffee Lake mobile (UHD 620)
-            'Comet Lake': 'CQClPg==', // 0x3EA50009 — Comet Lake mobile (UHD 620/630)
-            'Ice Lake':   'AAD/AQ==', // 0x01FF0000 — Ice Lake mobile (Iris Plus)
+            'Sandy Bridge':'AAABAA==', // 0x00010000 — Sandy Bridge mobile
+            'Ivy Bridge':  'BABmAQ==', // 0x01660004 — Ivy Bridge mobile (≥1600×900)
+            'Haswell':     'BgAmCg==', // 0x0A260006 — Haswell mobile (HD 4400/4600)
+            'Broadwell':   'BgAmFg==', // 0x16260006 — Broadwell mobile (HD 5500/6000)
+            'Skylake':     'AAAWGQ==', // 0x19160000 — Skylake mobile (HD 520/530)
+            'Kaby Lake':   'AAAbWQ==', // 0x591B0000 — Kaby Lake mobile (HD 620/630)
+            'Coffee Lake': 'CQClPg==', // 0x3EA50009 — Coffee Lake mobile (UHD 630)
+            'Comet Lake':  'CQClPg==', // 0x3EA50009 — Comet Lake mobile (UHD 620/630)
+            'Ice Lake':    'AABSig==', // 0x8A520000 — Ice Lake mobile (Iris Plus G7)
         };
 
         // ── Desktop display ig-platform-ids — Source: Dortania per-gen config.plist guides
         const DISPLAY_IDS: Record<string, string> = {
-            'Haswell':    'AwAiDQ==', // 0x0D220003
-            'Broadwell':  'BwAiFg==', // 0x16220007
-            'Skylake':    'AAASGQ==', // 0x19120000
-            'Kaby Lake':  'AAASWQ==', // 0x59120000
-            'Coffee Lake':'BwCbPg==', // 0x3E9B0007
-            'Comet Lake': 'BwCbPg==', // 0x3E9B0007
+            'Sandy Bridge':'EAADAA==', // 0x00030010
+            'Ivy Bridge':  'CgBmAQ==', // 0x0166000A
+            'Haswell':     'AwAiDQ==', // 0x0D220003
+            'Broadwell':   'BwAiFg==', // 0x16220007
+            'Skylake':     'AAASGQ==', // 0x19120000
+            'Kaby Lake':   'AAASWQ==', // 0x59120000
+            'Coffee Lake': 'BwCbPg==', // 0x3E9B0007
+            'Comet Lake':  'BwCbPg==', // 0x3E9B0007
         };
         // ── Desktop headless ig-platform-ids — Source: Dortania per-gen config.plist guides
         const HEADLESS_IDS: Record<string, string> = {
-            'Haswell':    'BAASBA==', // 0x04120004
-            'Broadwell':  'BgAmFg==', // 0x16260006
-            'Skylake':    'AQASGQ==', // 0x19120001
-            'Kaby Lake':  'AwASWQ==', // 0x59120003
-            'Coffee Lake':'AwCRPg==', // 0x3E910003
-            'Comet Lake': 'AwDImw==', // 0x9BC80003
+            'Sandy Bridge':'AAAFAA==', // 0x00050000
+            'Ivy Bridge':  'BwBiAQ==', // 0x01620007
+            'Haswell':     'BAASBA==', // 0x04120004
+            'Broadwell':   'BgAmFg==', // 0x16260006 (no Dortania-specified desktop headless; using mobile fallback)
+            'Skylake':     'AQASGQ==', // 0x19120001
+            'Kaby Lake':   'AwASWQ==', // 0x59120003
+            'Coffee Lake': 'AwCRPg==', // 0x3E910003
+            'Comet Lake':  'AwDImw==', // 0x9BC80003
         };
 
         const gen = profile.generation;
@@ -933,7 +1006,7 @@ export function generateConfigPlist(profile: HardwareProfile): string {
             <key>EnableWriteUnprotector</key><${quirks.EnableWriteUnprotector}/>
             <key>ForceBooterSignature</key><false/>
             <key>ForceExitBootServices</key><false/>
-            <key>ProtectMemoryRegions</key><false/>
+            <key>ProtectMemoryRegions</key><${quirks.ProtectMemoryRegions}/>
             <key>ProtectSecureBoot</key><false/>
             <key>ProtectUefiServices</key><${quirks.ProtectUefiServices}/>
             <key>ProvideCustomSlide</key><${quirks.ProvideCustomSlide}/>
@@ -1274,7 +1347,7 @@ export function generateConfigPlist(profile: HardwareProfile): string {
             <key>ExitBootServicesDelay</key><integer>0</integer>
             <key>ForceOcWriteFlash</key><false/>
             <key>ForgeUefiSupport</key><false/>
-            <key>IgnoreInvalidFlexRatio</key><false/>
+            <key>IgnoreInvalidFlexRatio</key><${quirks.IgnoreInvalidFlexRatio}/>
             <key>ReleaseUsbOwnership</key><${quirks.ReleaseUsbOwnership}/>
             <key>ReloadOptionRoms</key><false/>
             <key>RequestBootVarRouting</key><${quirks.RequestBootVarRouting}/>

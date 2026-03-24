@@ -181,12 +181,12 @@ describe('Laptop kext policy', () => {
 
 describe('Laptop ig-platform-id policy', () => {
   const LAPTOP_PLATFORM_IDS: Record<string, string> = {
-    'Haswell':     'BgAmCg==', // 0x0A260006
-    'Broadwell':   'BgAmFg==', // 0x16260006
-    'Skylake':     'AAAZYQ==', // 0x19160000
-    'Kaby Lake':   'AABZYQ==', // 0x59160000
-    'Coffee Lake': 'CQClPg==', // 0x3EA50009
-    'Comet Lake':  'CQClPg==', // 0x3EA50009
+    'Haswell':     'BgAmCg==', // 0x0A260006 — Dortania haswell laptop
+    'Broadwell':   'BgAmFg==', // 0x16260006 — Dortania broadwell laptop
+    'Skylake':     'AAAWGQ==', // 0x19160000 — Dortania skylake laptop
+    'Kaby Lake':   'AAAbWQ==', // 0x591B0000 — Dortania kaby-lake laptop
+    'Coffee Lake': 'CQClPg==', // 0x3EA50009 — Dortania coffee-lake laptop
+    'Comet Lake':  'CQClPg==', // 0x3EA50009 — Dortania coffee-lake-plus laptop
   };
 
   for (const [gen, expectedId] of Object.entries(LAPTOP_PLATFORM_IDS)) {
@@ -201,7 +201,7 @@ describe('Laptop ig-platform-id policy', () => {
   }
 
   it('laptop ig-platform-ids are different from desktop display IDs', () => {
-    // Skylake desktop display: AAASGQ== vs laptop: AAAZYQ==
+    // Skylake desktop display: AAASGQ== (0x19120000) vs laptop: AAAWGQ== (0x19160000)
     const desktopPlist = generateConfigPlist({
       ...laptop({ generation: 'Skylake', smbios: 'iMac17,1' }),
       isLaptop: false,
@@ -211,7 +211,7 @@ describe('Laptop ig-platform-id policy', () => {
       smbios: 'MacBookPro14,1',
     }));
     expect(desktopPlist).toContain('AAASGQ==');
-    expect(laptopPlist).toContain('AAAZYQ==');
+    expect(laptopPlist).toContain('AAAWGQ==');
     expect(laptopPlist).not.toContain('AAASGQ==');
   });
 

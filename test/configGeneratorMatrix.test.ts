@@ -311,8 +311,8 @@ describe('generateConfigPlist — CPUID spoofing', () => {
 
   it('Coffee Lake uses default CPUID (no spoofing needed)', () => {
     const plist = generateConfigPlist(fakeProfile({ generation: 'Coffee Lake' }));
-    // Default CPUID data is all zeros
-    expect(plist).toContain('AAAAAAAAAAAAAA==');
+    // Default CPUID data is all zeros (16 bytes)
+    expect(plist).toContain('AAAAAAAAAAAAAAAAAAAA');
   });
 });
 
@@ -414,9 +414,10 @@ describe('getRequiredResources — SSDT selection matrix', () => {
     expect(r.ssdts).toEqual(expect.arrayContaining(['SSDT-PLUG.aml', 'SSDT-EC.aml']));
   });
 
-  it('Sandy Bridge uses SSDT-PLUG + SSDT-EC', () => {
+  it('Sandy Bridge uses SSDT-EC only (no XCPM, no SSDT-PLUG)', () => {
     const r = getRequiredResources(fakeProfile({ generation: 'Sandy Bridge' }));
-    expect(r.ssdts).toEqual(expect.arrayContaining(['SSDT-PLUG.aml', 'SSDT-EC.aml']));
+    expect(r.ssdts).toContain('SSDT-EC.aml');
+    expect(r.ssdts).not.toContain('SSDT-PLUG.aml');
   });
 
   it('Skylake uses SSDT-PLUG + SSDT-EC-USBX (USB power management required on 6th gen)', () => {
@@ -985,13 +986,13 @@ describe('getQuirksForGeneration — cross-generation policy', () => {
     expect(q.AppleXcpmExtraMsrs).toBe(true);
   });
 
-  it('Ice Lake laptop gets MacBookPro16,2 SMBIOS', () => {
+  it('Ice Lake laptop gets MacBookAir9,1 SMBIOS (Dortania primary)', () => {
     const smbios = getSMBIOSForProfile(fakeProfile({
       generation: 'Ice Lake',
       isLaptop: true,
       targetOS: 'macOS Ventura 13',
     }));
-    expect(smbios).toBe('MacBookPro16,2');
+    expect(smbios).toBe('MacBookAir9,1');
   });
 
   it('Ice Lake laptop gets SSDT-AWAC', () => {
@@ -1089,17 +1090,33 @@ describe('getQuirksForGeneration — cross-generation policy', () => {
     }))).not.toThrow(); // HEDT goes to MacPro7,1, which is valid
   });
 
-  it('HEDT generations get SSDT-EC-USBX and SSDT-PLUG', () => {
-    for (const gen of ['Ivy Bridge-E', 'Haswell-E', 'Broadwell-E', 'Cascade Lake-X'] as const) {
+  it('HEDT Haswell-E+ get SSDT-PLUG + SSDT-EC-USBX', () => {
+    for (const gen of ['Haswell-E', 'Broadwell-E', 'Cascade Lake-X'] as const) {
       const r = getRequiredResources(fakeProfile({ generation: gen }));
       expect(r.ssdts, gen).toContain('SSDT-PLUG.aml');
       expect(r.ssdts, gen).toContain('SSDT-EC-USBX.aml');
     }
   });
 
-  it('Cascade Lake-X includes SSDT-UNC', () => {
-    const r = getRequiredResources(fakeProfile({ generation: 'Cascade Lake-X' }));
-    expect(r.ssdts).toContain('SSDT-UNC.aml');
+  it('Ivy Bridge-E gets SSDT-EC (no XCPM, no SSDT-PLUG)', () => {
+    const r = getRequiredResources(fakeProfile({ generation: 'Ivy Bridge-E' }));
+    expect(r.ssdts).toContain('SSDT-EC.aml');
+    expect(r.ssdts).not.toContain('SSDT-PLUG.aml');
+    expect(r.ssdts).not.toContain('SSDT-EC-USBX.aml');
+  });
+
+  it('All HEDT generations get SSDT-UNC', () => {
+    for (const gen of ['Ivy Bridge-E', 'Haswell-E', 'Broadwell-E', 'Cascade Lake-X'] as const) {
+      const r = getRequiredResources(fakeProfile({ generation: gen }));
+      expect(r.ssdts, gen).toContain('SSDT-UNC.aml');
+    }
+  });
+
+  it('Haswell-E/Broadwell-E get SSDT-RTC0-RANGE', () => {
+    for (const gen of ['Haswell-E', 'Broadwell-E'] as const) {
+      const r = getRequiredResources(fakeProfile({ generation: gen }));
+      expect(r.ssdts, gen).toContain('SSDT-RTC0-RANGE.aml');
+    }
   });
 
   it('Pre-Sandy Bridge does NOT include SSDT-PLUG', () => {
