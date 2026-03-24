@@ -385,7 +385,7 @@ describe('getRequiredResources — kext selection matrix', () => {
     expect(r.kexts).toContain('SMCBatteryManager.kext');
     expect(r.kexts).toContain('VoodooPS2Controller.kext');
     expect(r.ssdts).toContain('SSDT-PNLF.aml');
-    expect(r.ssdts).toContain('SSDT-XOSI.aml');
+    expect(r.ssdts).toContain('SSDT-GPIO.aml');
   });
 
   it('includes laptop SSDTs for AMD laptop', () => {
@@ -395,7 +395,7 @@ describe('getRequiredResources — kext selection matrix', () => {
       isLaptop: true,
     }));
     expect(r.ssdts).toContain('SSDT-PNLF.aml');
-    expect(r.ssdts).toContain('SSDT-XOSI.aml');
+    // AMD laptops don't get GPIO/XOSI — those are Intel-specific trackpad SSDTs
   });
 });
 

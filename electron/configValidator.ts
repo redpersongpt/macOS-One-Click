@@ -583,15 +583,16 @@ export async function validateEfi(
       ));
     }
 
-    // AMD patch completeness — warn that cpuid_cores_per_package patches are not included
-    if (profile && profile.architecture === 'AMD' && hasAMDPatches(plistContent)) {
+    // AMD patch completeness — cpuid_cores_per_package patches are now auto-generated.
+    // Warn only if core count is missing (scan failure).
+    if (profile && profile.architecture === 'AMD' && hasAMDPatches(plistContent) && !profile.coreCount) {
       issues.push(warning(
-        'AMD_PATCHES_INCOMPLETE',
-        'AMD cpuid_cores_per_package patches are not included',
+        'AMD_CORE_COUNT_MISSING',
+        'AMD core count was not detected — cpuid_cores_per_package patches may use wrong value',
         'Kernel patches',
         'EFI/OC/config.plist',
-        'The generated AMD kernel patches do not include cpuid_cores_per_package. macOS may report incorrect CPU topology. Source these patches from https://github.com/AMD-OSX/AMD_Vanilla for your specific macOS version and core count.',
-        `Core count: ${profile.coreCount ?? 'unknown'}`,
+        'The hardware scan did not detect a core count. Re-run the scan or set the core count manually.',
+        'Core count: unknown',
       ));
     }
 

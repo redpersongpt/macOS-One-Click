@@ -36,7 +36,7 @@ function profile(overrides: Partial<HardwareProfile> = {}): HardwareProfile {
     bootArgs: overrides.bootArgs ?? '-v',
     isLaptop: overrides.isLaptop ?? false,
     isVM: overrides.isVM ?? false,
-    audioLayoutId: overrides.audioLayoutId ?? 1,
+    audioLayoutId: 'audioLayoutId' in overrides ? overrides.audioLayoutId : 1,
     strategy: overrides.strategy ?? 'canonical',
     coreCount: overrides.coreCount,
     ...overrides,
@@ -371,8 +371,13 @@ describe('Dortania: SSDT selection', () => {
     expect(r.ssdts).toContain('SSDT-PNLF.aml');
   });
 
-  it('Laptop always gets SSDT-XOSI', () => {
-    const r = getRequiredResources(profile({ isLaptop: true }));
+  it('Haswell+ laptop gets SSDT-GPIO (I2C trackpad)', () => {
+    const r = getRequiredResources(profile({ isLaptop: true, generation: 'Coffee Lake' }));
+    expect(r.ssdts).toContain('SSDT-GPIO.aml');
+  });
+
+  it('Sandy/Ivy Bridge laptop gets SSDT-XOSI (pre-I2C)', () => {
+    const r = getRequiredResources(profile({ isLaptop: true, generation: 'Sandy Bridge' }));
     expect(r.ssdts).toContain('SSDT-XOSI.aml');
   });
 
@@ -870,5 +875,220 @@ describe('Dortania: Skylake desktop + RX 580 (i7-6700K, MSI H110M, RTL8111H)', (
     expect(plist).toContain('OpenHfsPlus.efi');
     expect(plist).toContain('OpenRuntime.efi');
     expect(plist).toContain('OpenCanopy.efi');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 12. GAP CLOSURE: SSDT-GPIO, SSDT-RHUB, ACPI Delete, device-id spoofs,
+//     audio codec, Intel Wi-Fi, AMD core count patches
+// ═══════════════════════════════════════════════════════════════════════════════
+
+import { resolveAudioLayoutId } from '../electron/configGenerator.js';
+import { getAMDPatches, AMD_PATCH_COMPLETENESS } from '../electron/amdPatches.js';
+
+describe('Dortania Gap: SSDT-GPIO for Haswell+ laptops', () => {
+  for (const gen of ['Haswell', 'Broadwell', 'Skylake', 'Kaby Lake', 'Coffee Lake', 'Comet Lake', 'Ice Lake'] as const) {
+    it(`${gen} laptop includes SSDT-GPIO`, () => {
+      const r = getRequiredResources(profile({ generation: gen, isLaptop: true }));
+      expect(r.ssdts).toContain('SSDT-GPIO.aml');
+    });
+  }
+
+  it('Sandy/Ivy Bridge laptop does NOT include SSDT-GPIO', () => {
+    for (const gen of ['Sandy Bridge', 'Ivy Bridge'] as const) {
+      const r = getRequiredResources(profile({ generation: gen, isLaptop: true }));
+      expect(r.ssdts).not.toContain('SSDT-GPIO.aml');
+      expect(r.ssdts).toContain('SSDT-XOSI.aml');
+    }
+  });
+
+  it('desktop does NOT include SSDT-GPIO', () => {
+    const r = getRequiredResources(profile({ generation: 'Coffee Lake', isLaptop: false }));
+    expect(r.ssdts).not.toContain('SSDT-GPIO.aml');
+  });
+});
+
+describe('Dortania Gap: SSDT-RHUB for Ice Lake laptop', () => {
+  it('Ice Lake laptop includes SSDT-RHUB', () => {
+    const r = getRequiredResources(profile({ generation: 'Ice Lake', isLaptop: true }));
+    expect(r.ssdts).toContain('SSDT-RHUB.aml');
+  });
+
+  it('Coffee Lake laptop does NOT include SSDT-RHUB', () => {
+    const r = getRequiredResources(profile({ generation: 'Coffee Lake', isLaptop: true }));
+    expect(r.ssdts).not.toContain('SSDT-RHUB.aml');
+  });
+});
+
+describe('Dortania Gap: Sandy Bridge ACPI Delete entries', () => {
+  it('Sandy Bridge plist contains CpuPm and Cpu0Ist ACPI Delete entries', () => {
+    const p = withSmbios(profile({ generation: 'Sandy Bridge', targetOS: 'macOS Big Sur 11' }));
+    const plist = generateConfigPlist(p);
+    expect(plist).toContain('Delete CpuPm');
+    expect(plist).toContain('Delete Cpu0Ist');
+    // OemTableId for CpuPm: Q3B1UG0AAAA= (hex 437075506d000000)
+    expect(plist).toContain('Q3B1UG0AAAA=');
+    // OemTableId for Cpu0Ist: Q3B1MElzdAA= (hex 4370753049737400)
+    expect(plist).toContain('Q3B1MElzdAA=');
+  });
+
+  it('Ivy Bridge also has ACPI Delete entries', () => {
+    const p = withSmbios(profile({ generation: 'Ivy Bridge', targetOS: 'macOS Big Sur 11' }));
+    const plist = generateConfigPlist(p);
+    expect(plist).toContain('Delete CpuPm');
+  });
+
+  it('Coffee Lake does NOT have ACPI Delete entries', () => {
+    const plist = generateConfigPlist(withSmbios(profile({ generation: 'Coffee Lake' })));
+    expect(plist).not.toContain('Delete CpuPm');
+  });
+});
+
+describe('Dortania Gap: device-id spoofing', () => {
+  it('Sandy Bridge display injects device-id 26010000', () => {
+    const p = withSmbios(profile({ generation: 'Sandy Bridge', targetOS: 'macOS Big Sur 11' }));
+    const plist = generateConfigPlist(p);
+    expect(plist).toContain('JgEAAA=='); // 26010000
+  });
+
+  it('Sandy Bridge headless injects device-id 02010000', () => {
+    const p = withSmbios(profile({
+      generation: 'Sandy Bridge', targetOS: 'macOS Big Sur 11',
+      gpuDevices: [{ name: 'AMD Radeon RX 580' }, { name: 'Intel HD 3000' }],
+    }));
+    const plist = generateConfigPlist(p);
+    expect(plist).toContain('AgEAAA=='); // 02010000
+  });
+
+  it('Haswell display injects device-id 12040000 (HD 4400→4600)', () => {
+    const p = withSmbios(profile({
+      generation: 'Haswell', targetOS: 'macOS Big Sur 11',
+    }));
+    const plist = generateConfigPlist(p);
+    expect(plist).toContain('EgQAAA=='); // 12040000
+  });
+
+  it('Haswell headless does NOT inject device-id (not needed)', () => {
+    const p = withSmbios(profile({
+      generation: 'Haswell', targetOS: 'macOS Big Sur 11',
+      gpuDevices: [{ name: 'AMD Radeon RX 580' }, { name: 'Intel HD 4600' }],
+    }));
+    const plist = generateConfigPlist(p);
+    expect(plist).not.toContain('EgQAAA==');
+  });
+
+  it('Coffee Lake laptop injects device-id 9B3E0000 (UHD 620)', () => {
+    const p = profile({
+      generation: 'Coffee Lake', isLaptop: true,
+      smbios: 'MacBookPro15,2',
+    });
+    const plist = generateConfigPlist(p);
+    expect(plist).toContain('mz4AAA=='); // 9B3E0000
+  });
+});
+
+describe('Dortania Gap: audio codec → layout-id', () => {
+  it('ALC887 resolves to layout-id 1', () => {
+    expect(resolveAudioLayoutId('Realtek ALC887')).toBe(1);
+  });
+
+  it('ALC1220 resolves to layout-id 1', () => {
+    expect(resolveAudioLayoutId('Realtek ALC1220')).toBe(1);
+  });
+
+  it('ALC256 resolves to layout-id 5', () => {
+    expect(resolveAudioLayoutId('Realtek ALC256')).toBe(5);
+  });
+
+  it('ALC269 resolves to layout-id 1', () => {
+    expect(resolveAudioLayoutId('Realtek ALC269')).toBe(1);
+  });
+
+  it('ALC295 resolves to layout-id 1', () => {
+    expect(resolveAudioLayoutId('Realtek ALC295')).toBe(1);
+  });
+
+  it('unknown codec falls back to 1', () => {
+    expect(resolveAudioLayoutId('Unknown Codec')).toBe(1);
+    expect(resolveAudioLayoutId(undefined)).toBe(1);
+  });
+
+  it('codec-aware layout-id appears in generated plist', () => {
+    // Must NOT set audioLayoutId so codec detection kicks in
+    const p = withSmbios(profile({ audioCodec: 'Realtek ALC256', audioLayoutId: undefined }));
+    const plist = generateConfigPlist(p);
+    // layout-id 5 → base64 of [5, 0, 0, 0] = BQAAAA==
+    expect(plist).toContain('BQAAAA==');
+  });
+
+  it('explicit audioLayoutId overrides codec detection', () => {
+    const p = withSmbios(profile({ audioCodec: 'Realtek ALC256', audioLayoutId: 11 }));
+    const plist = generateConfigPlist(p);
+    // layout-id 11 → base64 of [11, 0, 0, 0] = CwAAAA==
+    expect(plist).toContain('CwAAAA==');
+  });
+});
+
+describe('Dortania Gap: Intel Wi-Fi kext for laptops', () => {
+  for (const gen of ['Skylake', 'Kaby Lake', 'Coffee Lake', 'Comet Lake', 'Ice Lake'] as const) {
+    it(`${gen} laptop includes itlwm.kext`, () => {
+      const r = getRequiredResources(profile({ generation: gen, isLaptop: true }));
+      expect(r.kexts).toContain('itlwm.kext');
+    });
+  }
+
+  it('desktop does NOT include itlwm', () => {
+    const r = getRequiredResources(profile({ generation: 'Coffee Lake', isLaptop: false }));
+    expect(r.kexts).not.toContain('itlwm.kext');
+  });
+
+  it('Sandy Bridge laptop does NOT include itlwm', () => {
+    const r = getRequiredResources(profile({ generation: 'Sandy Bridge', isLaptop: true }));
+    expect(r.kexts).not.toContain('itlwm.kext');
+  });
+});
+
+describe('Dortania Gap: AMD cpuid_cores_per_package patches', () => {
+  it('AMD_PATCH_COMPLETENESS reports core count patches present', () => {
+    expect(AMD_PATCH_COMPLETENESS.hasCoreCountPatches).toBe(true);
+    expect(AMD_PATCH_COMPLETENESS.missingPatches).toEqual([]);
+  });
+
+  it('getAMDPatches includes 4 core count patches', () => {
+    const patches = getAMDPatches(8);
+    const corePatches = patches.filter(p => p.Comment.includes('cpuid_cores_per_package'));
+    expect(corePatches.length).toBe(4);
+  });
+
+  it('core count patches cover all kernel ranges', () => {
+    const patches = getAMDPatches(8);
+    const corePatches = patches.filter(p => p.Comment.includes('cpuid_cores_per_package'));
+    const ranges = corePatches.map(p => `${p.MinKernel}-${p.MaxKernel}`);
+    expect(ranges).toContain('17.0.0-18.99.99');  // 10.13-10.14
+    expect(ranges).toContain('19.0.0-21.99.99');  // 10.15-12
+    expect(ranges).toContain('22.0.0-22.3.99');   // 13.0-13.2
+    expect(ranges).toContain('22.4.0-');           // 13.3+
+  });
+
+  it('Replace bytes encode the correct core count', () => {
+    const patches6 = getAMDPatches(6);
+    const patches16 = getAMDPatches(16);
+    // 6 cores: B8 06 → patch 1 Replace starts with B8 06
+    const p6 = patches6.find(p => p.MinKernel === '17.0.0' && p.Comment.includes('cpuid_cores_per_package'))!;
+    const p16 = patches16.find(p => p.MinKernel === '17.0.0' && p.Comment.includes('cpuid_cores_per_package'))!;
+    // Decode base64 and check byte 1 (core count)
+    const buf6 = Buffer.from(p6.Replace, 'base64');
+    const buf16 = Buffer.from(p16.Replace, 'base64');
+    expect(buf6[0]).toBe(0xB8);
+    expect(buf6[1]).toBe(6);
+    expect(buf16[1]).toBe(16);
+  });
+
+  it('AMD plist includes core count patches', () => {
+    const plist = generateConfigPlist(withSmbios(profile({
+      architecture: 'AMD', generation: 'Ryzen', coreCount: 8,
+      gpuDevices: [{ name: 'AMD Radeon RX 580' }],
+    })));
+    expect(plist).toContain('cpuid_cores_per_package');
   });
 });

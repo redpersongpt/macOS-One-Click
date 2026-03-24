@@ -49,6 +49,7 @@ export const DORTANIA_COMPILED_ACPI_FILES = new Set([
   'SSDT-RTC0-RANGE-HEDT.aml',
   'SSDT-UNC.aml',
   'SSDT-XOSI.aml',
+  'SSDT-GPIO.aml',
 ]);
 
 function dortaniaSupplemental(fileName: string): NonNullable<SsdtSourcePolicy['supplementalDownload']> {

@@ -61,6 +61,44 @@ const CODELESS_KEXTS = new Set([
     'AppleMCEReporterDisabler.kext',
 ]);
 
+// ── Audio Codec → Layout-ID Map ─────────────────────────────────────────────
+// Source: https://github.com/acidanthera/AppleALC/wiki/Supported-codecs
+// First entry is the safest default for each codec.
+// When the hardware scan reports a codec name, we pick the best layout-id.
+// Falls back to 1 when codec is unknown (universal safe value).
+
+const CODEC_LAYOUT_MAP: Record<string, number> = {
+    'alc215':  18, 'alc221':  11, 'alc222':  11, 'alc225':  28,
+    'alc230':  13, 'alc233':  3,  'alc235':  11, 'alc236':  3,
+    'alc245':  11, 'alc255':  3,  'alc256':  5,  'alc257':  11,
+    'alc260':  11, 'alc262':  7,  'alc269':  1,  'alc270':  3,
+    'alc272':  3,  'alc274':  21, 'alc275':  3,  'alc280':  3,
+    'alc282':  3,  'alc283':  1,  'alc284':  3,  'alc285':  11,
+    'alc286':  3,  'alc288':  3,  'alc289':  11, 'alc290':  3,
+    'alc292':  12, 'alc293':  11, 'alc294':  11, 'alc295':  1,
+    'alc298':  3,  'alc299':  21, 'alc662':  5,  'alc663':  3,
+    'alc668':  3,  'alc670':  12, 'alc671':  12, 'alc700':  11,
+    'alc882':  5,  'alc883':  1,  'alc885':  1,  'alc887':  1,
+    'alc888':  1,  'alc889':  1,  'alc891':  1,  'alc892':  1,
+    'alc897':  11, 'alc898':  1,  'alc899':  1,  'alc1150': 1,
+    'alc1200': 1,  'alc1220': 1,
+};
+
+/**
+ * Resolve the best layout-id for a given audio codec name.
+ * Matches against the AppleALC codec table; returns 1 as universal fallback.
+ */
+export function resolveAudioLayoutId(codecName: string | undefined): number {
+    if (!codecName) return 1;
+    const lower = codecName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    // Try exact ALC model match (e.g. "alc887", "alc1220")
+    const alcMatch = lower.match(/alc\d+/);
+    if (alcMatch && CODEC_LAYOUT_MAP[alcMatch[0]] !== undefined) {
+        return CODEC_LAYOUT_MAP[alcMatch[0]];
+    }
+    return 1;
+}
+
 // --- Types ---
 
 export interface HardwareProfile {
@@ -79,6 +117,7 @@ export interface HardwareProfile {
     bootArgs: string;
     isLaptop: boolean;
     isVM?: boolean;
+    audioCodec?: string;
     audioLayoutId?: number;
     strategy?: 'canonical' | 'conservative' | 'blocked';
     /**
@@ -650,14 +689,38 @@ export function getRequiredResources(profile: HardwareProfile) {
 
         // Backlight — SSDT-PNLF is required for all Intel laptop displays
         pushSsdt('SSDT-PNLF.aml');
-        // Windows ACPI compatibility — fixes _OSI checks for trackpad/hotkey/sensor ACPI methods
-        pushSsdt('SSDT-XOSI.aml');
 
-        // SSDT-IMEI: required on Sandy Bridge and Ivy Bridge laptops for IMEI device,
-        // and on Haswell laptops with 7-series chipsets (mixed-generation boards).
-        // Source: Dortania ACPI guide — "Sandy/Ivy Bridge laptops need SSDT-IMEI"
+        // SSDT-GPIO: required for VoodooI2C trackpads on Haswell+ laptops
+        // SSDT-XOSI: fallback for Windows ACPI compatibility when GPIO causes issues
+        // Source: Dortania Getting-Started-With-ACPI — Haswell+ laptops need GPIO or XOSI
+        if (['Haswell', 'Broadwell', 'Skylake', 'Kaby Lake', 'Coffee Lake', 'Comet Lake', 'Ice Lake'].includes(profile.generation)) {
+            pushSsdt('SSDT-GPIO.aml');
+        }
+        // Pre-Haswell laptops use SSDT-XOSI only (no I2C, PS2 trackpads)
+        if (['Sandy Bridge', 'Ivy Bridge'].includes(profile.generation)) {
+            pushSsdt('SSDT-XOSI.aml');
+        }
+
+        // SSDT-IMEI: required on Sandy Bridge and Ivy Bridge laptops for IMEI device
+        // Source: Dortania ACPI guide
         if (['Sandy Bridge', 'Ivy Bridge'].includes(profile.generation)) {
             pushSsdt('SSDT-IMEI.aml');
+        }
+
+        // SSDT-RHUB: required for Ice Lake laptops — fixes Root-device errors on USB
+        // Source: Dortania config-laptop.plist/icelake.html
+        if (profile.generation === 'Ice Lake') {
+            pushSsdt('SSDT-RHUB.aml');
+        }
+
+        // Intel Wi-Fi: most laptops Skylake+ have Intel Wi-Fi cards.
+        // AirportItlwm provides native-like Wi-Fi including Recovery support,
+        // but requires SecureBootModel to be non-Disabled.
+        // Since we set SecureBootModel=Disabled for broad compat, use itlwm.
+        // itlwm uses the Heliport companion app and works without SecureBootModel.
+        // Source: Dortania ktext.html, OpenIntelWireless docs
+        if (['Skylake', 'Kaby Lake', 'Coffee Lake', 'Comet Lake', 'Ice Lake'].includes(profile.generation)) {
+            pushUnique('itlwm.kext');
         }
 
         // SMCProcessor/SMCSuperIO: desktop only — laptops don't need fan/IO monitoring kexts
@@ -788,7 +851,8 @@ export function generateConfigPlist(profile: HardwareProfile): string {
         );
     }
 
-    const audioLayoutId = profile.audioLayoutId ?? 1;
+    // Audio layout-id: prefer explicit override, then codec detection, then fallback to 1
+    const audioLayoutId = profile.audioLayoutId ?? resolveAudioLayoutId(profile.audioCodec);
     const sipPolicy = getSIPPolicy(profile, gpuDevices);
     let bootArgs = profile.bootArgs;
 
@@ -863,9 +927,30 @@ export function generateConfigPlist(profile: HardwareProfile): string {
     const gpuAssessments = gpuDevices.map(classifyGpu);
     const headlessIgpu = gpuAssessments.some(a => a.isLikelyDiscrete && a.tier !== 'unsupported');
 
+    // ── Device-ID spoofing ─────────────────────────────────────────────────
+    // Source: Dortania per-gen config.plist pages
+    let deviceIdSpoof = '';
+
     let gpuProperties = '';
     if (profile.architecture === 'Intel' &&
         !['Alder Lake', 'Raptor Lake', 'Rocket Lake'].includes(profile.generation)) {
+
+        // Sandy Bridge: device-id spoof for HD 2000/3000
+        if (profile.generation === 'Sandy Bridge') {
+            deviceIdSpoof = headlessIgpu
+                ? `\n                <key>device-id</key>\n                <data>AgEAAA==</data>` // 02010000 compute
+                : `\n                <key>device-id</key>\n                <data>JgEAAA==</data>`; // 26010000 display
+        }
+        // Haswell: HD 4400 needs device-id spoof to HD 4600 (12040000)
+        // Source: Dortania haswell.html
+        if (profile.generation === 'Haswell' && !headlessIgpu) {
+            deviceIdSpoof = `\n                <key>device-id</key>\n                <data>EgQAAA==</data>`; // 12040000
+        }
+        // Coffee Lake/Comet Lake laptop: UHD 620 needs device-id 9B3E0000
+        // Source: Dortania coffee-lake.html (laptop)
+        if (profile.isLaptop && ['Coffee Lake', 'Comet Lake'].includes(profile.generation)) {
+            deviceIdSpoof = `\n                <key>device-id</key>\n                <data>mz4AAA==</data>`; // 9B3E0000
+        }
 
         // ── Laptop ig-platform-ids — Source: Dortania per-gen laptop config.plist guides
         // Laptops ALWAYS use display ig-platform-ids (iGPU drives the panel).
@@ -930,7 +1015,7 @@ export function generateConfigPlist(profile: HardwareProfile): string {
             <key>PciRoot(0x0)/Pci(0x2,0x0)</key>
             <dict>
                 <key>AAPL,ig-platform-id</key>
-                <data>${platformId}</data>${fbPatches}
+                <data>${platformId}</data>${deviceIdSpoof}${fbPatches}
             </dict>`;
     }
 
@@ -962,6 +1047,31 @@ export function generateConfigPlist(profile: HardwareProfile): string {
     // Audio layout-id as base64
     const layoutIdBase64 = btoa(String.fromCharCode(audioLayoutId, 0, 0, 0));
 
+    // ── ACPI Delete entries ──────────────────────────────────────────────────
+    // Sandy Bridge / Ivy Bridge: delete CpuPm and Cpu0Ist ACPI tables
+    // to prevent AppleIntelCPUPowerManagement conflicts.
+    // Source: Dortania sandy-bridge.html, ivy-bridge.html
+    let acpiDeleteEntries = '';
+    if (['Sandy Bridge', 'Ivy Bridge'].includes(profile.generation)) {
+        acpiDeleteEntries = `
+            <dict>
+                <key>All</key><true/>
+                <key>Comment</key><string>Delete CpuPm</string>
+                <key>Enabled</key><true/>
+                <key>OemTableId</key><data>Q3B1UG0AAAA=</data>
+                <key>TableLength</key><integer>0</integer>
+                <key>TableSignature</key><data>U1NEVA==</data>
+            </dict>
+            <dict>
+                <key>All</key><true/>
+                <key>Comment</key><string>Delete Cpu0Ist</string>
+                <key>Enabled</key><true/>
+                <key>OemTableId</key><data>Q3B1MElzdAA=</data>
+                <key>TableLength</key><integer>0</integer>
+                <key>TableSignature</key><data>U1NEVA==</data>
+            </dict>`;
+    }
+
     return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -980,7 +1090,9 @@ export function generateConfigPlist(profile: HardwareProfile): string {
                 <string>${ssdt}</string>
             </dict>`).join('')}
         </array>
-        <key>Delete</key><array/>
+        <key>Delete</key>
+        <array>${acpiDeleteEntries}
+        </array>
         <key>Patch</key><array/>
         <key>Quirks</key>
         <dict>

@@ -477,9 +477,9 @@ describe('Benchmark: AMD patch honesty', () => {
     expect(disabled).toHaveLength(0);
   });
 
-  it('AMD_PATCH_COMPLETENESS flags missing core count patches', () => {
-    expect(AMD_PATCH_COMPLETENESS.hasCoreCountPatches).toBe(false);
-    expect(AMD_PATCH_COMPLETENESS.missingPatches.length).toBeGreaterThan(0);
+  it('AMD_PATCH_COMPLETENESS confirms core count patches are generated', () => {
+    expect(AMD_PATCH_COMPLETENESS.hasCoreCountPatches).toBe(true);
+    expect(AMD_PATCH_COMPLETENESS.missingPatches.length).toBe(0);
   });
 
   it('All AMD patches have non-empty Find and Replace', () => {

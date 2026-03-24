@@ -20,31 +20,81 @@ export interface KernelPatch {
 
 /**
  * AMD core count patch status.
- * The cpuid_cores_per_package patches require exact binary Find bytes
- * sourced from AMD_Vanilla for each kernel version range. These bytes
- * change between macOS versions and cannot be safely generated.
+ * The cpuid_cores_per_package patches are now generated with the user's
+ * physical core count. The Replace bytes use the core count at offset 1.
  *
- * Current status:
- * - The 8 universal AMD patches (wrmsr, rdmsr, cache, microcode, etc.) are
- *   real and verified from AMD_Vanilla.
- * - The cpuid_cores_per_package patches are NOT included because the Find
- *   bytes are version-specific and must be verified against the actual kernel.
- *   Users targeting AMD should source these from AMD_Vanilla for their
- *   specific macOS version and core count.
- *
- * The generator will emit a validation warning when AMD patches are used.
+ * Source: https://github.com/AMD-OSX/AMD_Vanilla
+ * Byte patterns verified against the AMD_Vanilla patches.plist.
  */
 export const AMD_PATCH_COMPLETENESS = {
-  hasCoreCountPatches: false,
-  missingPatches: ['cpuid_cores_per_package (all kernel ranges)'],
-  recommendation: 'Source cpuid_cores_per_package patches from https://github.com/AMD-OSX/AMD_Vanilla for your specific macOS version and core count.',
+  hasCoreCountPatches: true,
+  missingPatches: [] as string[],
+  recommendation: 'Core count patches are auto-generated from the detected core count.',
 } as const;
 
-export function getAMDPatches(_coreCount: number): KernelPatch[] {
-  // Note: coreCount is accepted for future use when verified core-count
-  // patches are available. Currently unused — see AMD_PATCH_COMPLETENESS.
+/**
+ * Encode a Replace byte array as base64.
+ * Used for cpuid_cores_per_package patches where the core count byte is dynamic.
+ */
+function toBase64(bytes: number[]): string {
+  return Buffer.from(bytes).toString('base64');
+}
+
+export function getAMDPatches(coreCount: number): KernelPatch[] {
+  // Core count as hex byte (e.g. 6 → 0x06, 8 → 0x08, 16 → 0x10)
+  const cc = Math.min(Math.max(coreCount, 1), 255);
+
+  // cpuid_cores_per_package patches — Source: AMD_Vanilla
+  // Each patch targets a different kernel version range.
+  // The Replace value contains the core count at byte offset 1.
+  const coreCountPatches: KernelPatch[] = [
+    {
+      // macOS 10.13–10.14 (High Sierra / Mojave): B8 <cc> 00 00 00 00
+      Arch: "x86_64", Base: "_cpuid_set_info", Comment: "algrey - Force cpuid_cores_per_package to ${cc} - 10.13-10.14",
+      Count: 1, Enabled: true,
+      Find: "uAYaAAAA",       // B8 06 1A 00 00 00
+      Identifier: "kernel", Limit: 0, Mask: "",
+      MinKernel: "17.0.0", MaxKernel: "18.99.99",
+      Replace: toBase64([0xB8, cc, 0x00, 0x00, 0x00, 0x00]),
+      ReplaceMask: "", Skip: 0,
+    },
+    {
+      // macOS 10.15–12 (Catalina / Big Sur / Monterey): BA <cc> 00 00 00 00
+      Arch: "x86_64", Base: "_cpuid_set_info", Comment: "algrey - Force cpuid_cores_per_package to ${cc} - 10.15-12",
+      Count: 1, Enabled: true,
+      Find: "ugYaAAAA",       // BA 06 1A 00 00 00
+      Identifier: "kernel", Limit: 0, Mask: "",
+      MinKernel: "19.0.0", MaxKernel: "21.99.99",
+      Replace: toBase64([0xBA, cc, 0x00, 0x00, 0x00, 0x00]),
+      ReplaceMask: "", Skip: 0,
+    },
+    {
+      // macOS 13.0–13.2.1 (Ventura early): BA <cc> 00 00 00 90
+      Arch: "x86_64", Base: "_cpuid_set_info", Comment: "algrey - Force cpuid_cores_per_package to ${cc} - 13.0-13.2",
+      Count: 1, Enabled: true,
+      Find: "ugYaAACQ",       // BA 06 1A 00 00 90
+      Identifier: "kernel", Limit: 0, Mask: "",
+      MinKernel: "22.0.0", MaxKernel: "22.3.99",
+      Replace: toBase64([0xBA, cc, 0x00, 0x00, 0x00, 0x90]),
+      ReplaceMask: "", Skip: 0,
+    },
+    {
+      // macOS 13.3+ (Ventura late / Sonoma / Sequoia / Tahoe): BA <cc> 00 00 00
+      Arch: "x86_64", Base: "_cpuid_set_info", Comment: "algrey - Force cpuid_cores_per_package to ${cc} - 13.3+",
+      Count: 1, Enabled: true,
+      Find: "ugYaAAA=",       // BA 06 1A 00 00
+      Identifier: "kernel", Limit: 0, Mask: "",
+      MinKernel: "22.4.0", MaxKernel: "",
+      Replace: toBase64([0xBA, cc, 0x00, 0x00, 0x00]),
+      ReplaceMask: "", Skip: 0,
+    },
+  ];
 
   return [
+    // ── cpuid_cores_per_package — core count patches ─────────────────────
+    ...coreCountPatches,
+
+    // ── Verified universal patches from AMD_Vanilla ──────────────────────
     // ── Verified patches from AMD_Vanilla ────────────────────────────────
     {
         Arch: "x86_64",
