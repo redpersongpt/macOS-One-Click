@@ -394,6 +394,7 @@ export default function App() {
   const buildRunIdRef = useRef(0);
   const buildStartRequestedRef = useRef(false);
   const biosAcceptedRef = useRef(false);
+  const lastSurfacedAlertIdRef = useRef<string | null>(null);
   const biosRefreshRequestIdRef = useRef(0);
   const buildAutoStartRef = useRef(false);
   const lastStableResourcePlanRef = useRef<ResourcePlan | null>(null);
@@ -1149,7 +1150,9 @@ export default function App() {
       }
       setBiosState(nextState);
       setBiosAcceptedRuntime(false);
-      if (options?.redirectIfBlocked && (!(nextState.readyToBuild && nextState.stage === 'complete')) && STEP_ORDER.indexOf(step) > STEP_ORDER.indexOf('bios')) {
+      // Only redirect to BIOS if explicitly requested AND no active build flow is in progress.
+      // Redirecting during an active build would yank the user back mid-operation.
+      if (options?.redirectIfBlocked && !isDeployingRef.current && (!(nextState.readyToBuild && nextState.stage === 'complete')) && STEP_ORDER.indexOf(step) > STEP_ORDER.indexOf('bios')) {
         _setStepRaw('bios');
       }
       return nextState;
@@ -1298,19 +1301,24 @@ export default function App() {
     return () => clearInterval(interval);
   }, [debugOpen]);
 
-  // Handle system alerts (Phase 5 hardening)
+  // Handle system alerts (Phase 5 hardening) — deduplicated by task ID
   useEffect(() => {
     const alerts = Array.from(tasks.values()).filter(t => (t.kind as string) === 'system-alert' && t.status === 'failed');
     if (alerts.length > 0) {
       const latest = alerts[alerts.length - 1];
-      if (latest.error) setErrorWithSuggestion(latest.error);
+      if (latest.error && latest.taskId !== lastSurfacedAlertIdRef.current) {
+        lastSurfacedAlertIdRef.current = latest.taskId;
+        setErrorWithSuggestion(latest.error);
+      }
     }
   }, [tasks]);
 
   // Drive recovPct / recovStatus / recovOffset from the live task state
+  // Gate on build flow snapshot to reject progress from stale recovery downloads.
   useEffect(() => {
     const p = recovTask?.progress as { kind: string; percent?: number; status?: string; bytesDownloaded?: number; dmgDest?: string; clDest?: string } | null | undefined;
-    if (!p) return;
+    const snapshot = buildFlowRef.current;
+    if (!p || !taskBelongsToRun(recovTask, snapshot?.startedAt)) return;
     if (p.percent !== undefined) setRecovPct(p.percent);
     if (p.status)                setRecovStatus(p.status);
     if (p.dmgDest) setRecovDmgDest(p.dmgDest);
@@ -2422,9 +2430,17 @@ export default function App() {
         setStep('report');
         return;
       }
-    } catch {
+    } catch (e: any) {
+      // Distinguish real validation failure from transient IPC/network errors.
+      // Transient errors should not force a full rebuild — warn and let the user retry.
+      const msg = e?.message ?? '';
+      const isTransient = msg.includes('timeout') || msg.includes('ECONNRESET') || msg.includes('IPC');
+      if (isTransient) {
+        setErrorWithSuggestion('EFI validation temporarily unavailable — this is likely a transient issue. Try again.');
+        return; // Stay on current step, don't force rebuild
+      }
       setBuildReady(false);
-      setErrorWithSuggestion('EFI validation failed — failed to verify build integrity. Please rebuild.');
+      setErrorWithSuggestion('EFI validation failed — could not verify build integrity. Please rebuild.');
       setStep('report');
       return;
     }
@@ -2705,6 +2721,7 @@ export default function App() {
       setBuildFlow(null);
       setBuildFlowAlert(null);
       isDeployingRef.current = false;
+      buildStartRequestedRef.current = false;
     }
     switch (resolveRecoveryRetryAction({
       targetStep: target,
@@ -2982,6 +2999,7 @@ export default function App() {
                   setStep('landing');
                   setProfile(null);
                   setEfiPath(null);
+                  invalidateGeneratedBuild();
                   try { window.electron.clearState(); } catch(e) {}
                   setDisclaimerAccepted(false);
                 }}
