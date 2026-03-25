@@ -170,10 +170,10 @@ describe('buildWindowsFlashDiskpartScript', () => {
     expect(script).toContain('convert gpt noerr');
   });
 
-  it('does NOT contain format or assign (moved to phase 2)', () => {
+  it('contains format and assign in single-pass script (#48, #49)', () => {
     const script = buildWindowsFlashDiskpartScript('0');
-    expect(script).not.toContain('format fs=fat32');
-    expect(script).not.toContain('assign noerr');
+    expect(script).toContain('format fs=fat32 quick label=OPENCORE');
+    expect(script).toContain('assign noerr');
   });
 });
 
@@ -220,9 +220,9 @@ describe('buildWindowsConvertToGptDiskpartScript', () => {
     expect(script).toContain('rescan');
   });
 
-  it('does NOT contain format (moved to phase 2 script)', () => {
+  it('contains format in single-pass script (#48, #49)', () => {
     const script = buildWindowsConvertToGptDiskpartScript('2');
-    expect(script).not.toContain('format fs=fat32');
+    expect(script).toContain('format fs=fat32 quick label=OPENCORE');
   });
 
   it('uses the Windows FAT32 size cap when provided', () => {

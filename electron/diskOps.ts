@@ -232,11 +232,12 @@ export function isWindowsUsbLikeDisk(input: {
 }
 
 export function buildWindowsFlashDiskpartScript(diskNum: string, partitionSizeMB?: number): string {
+  // Single-pass diskpart script: clean → create → format → assign in ONE session.
+  // Previous design used two separate diskpart invocations (Phase 1: create, Phase 2: format).
+  // This caused persistent FAT32 format failures (#48, #49) because Explorer/Shell auto-mounts
+  // the raw partition in the gap between the two processes, locking it before format can run.
+  // Merging into one session eliminates the inter-process window entirely.
   return [
-    // Disable automount BEFORE creating the partition to prevent Explorer
-    // from immediately grabbing a handle on the new raw volume.
-    // This is the root cause of FAT32 format failures (#48): Explorer
-    // auto-mounts the partition between create and format, locking it.
     'automount disable',
     `select disk ${diskNum}`,
     'attributes disk clear readonly noerr',
@@ -247,6 +248,11 @@ export function buildWindowsFlashDiskpartScript(diskNum: string, partitionSizeMB
     partitionSizeMB && partitionSizeMB > 0
       ? `create partition primary size=${partitionSizeMB} noerr`
       : 'create partition primary noerr',
+    // Format WITHOUT noerr so failures surface immediately (#38, #41).
+    // Running in the same session as create eliminates the Explorer lock race (#48, #49).
+    'format fs=fat32 quick label=OPENCORE',
+    'assign noerr',
+    'automount enable',
     'rescan',
     '',
   ].join('\n');
