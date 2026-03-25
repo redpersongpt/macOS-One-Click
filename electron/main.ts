@@ -1577,21 +1577,27 @@ async function getWindowsHardwareInfo(): Promise<HardwareProfile> {
   const generation = detectCpuGeneration(cpuModel);
   const architecture = detectArchitecture(cpuModel);
 
+  // Build gpuDevices list from parsed GPU names for proper classification downstream
+  const gpuNames = gpuModel.split(' / ').map(name => name.trim()).filter(Boolean);
+  const gpuDevices = gpuNames.map(name => ({ name }));
+
   const profile: HardwareProfile = {
     cpu: cpuModel,
     architecture,
     generation,
     coreCount,
     gpu: gpuModel,
+    gpuDevices,
     ram: (os.totalmem() / 1024 / 1024 / 1024).toFixed(0) + " GB",
     motherboard,
     targetOS: 'macOS Sequoia 15.x',
     smbios: '',
-    kexts: [], ssdts: [], 
+    kexts: [], ssdts: [],
     bootArgs: '-v keepsyms=1 debug=0x100',
     isLaptop,
     isVM,
-    audioLayoutId: 1
+    audioLayoutId: 1,
+    inputStack: 'unknown', // Legacy scanner cannot detect I2C — stays conservative PS2
   };
   profile.smbios = getSMBIOSForProfile(profile);
   return profile;

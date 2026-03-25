@@ -910,10 +910,14 @@ export function generateConfigPlist(profile: HardwareProfile): string {
         bootArgs = bootArgs.replace(/alcid=\d+/, `alcid=${audioLayoutId}`);
     }
 
-    // agdpmod=pikera — needed for Navi GPUs (always) and any AMD dGPU on iMac SMBIOS
-    // (AppleGraphicsDevicePolicy blocks non-Apple board-ids) — Source: kernel-issues.html
+    // agdpmod=pikera — needed for Navi/RDNA AMD GPUs to bypass AppleGraphicsDevicePolicy
+    // board-id check. Also needed on iMac SMBIOS with supported AMD dGPUs (Polaris+).
+    // Old GCN 1.0/2.0 GPUs (R5/R7/R9/HD 7xxx/8xxx) do NOT need pikera.
+    // Source: Dortania kernel-issues.html
     const smbiosNeedsPikera = profile.smbios.startsWith('iMac') &&
-        gpuDevices.map(classifyGpu).some(a => a.vendor === 'AMD' && a.isLikelyDiscrete);
+        gpuDevices.map(classifyGpu).some(a =>
+            a.vendor === 'AMD' && a.isLikelyDiscrete &&
+            (a.tier === 'supported' || a.tier === 'partial_support'));
     if (needsNaviPikera(gpuDevices) || smbiosNeedsPikera) {
         if (!bootArgs.includes('agdpmod=pikera')) bootArgs += ' agdpmod=pikera';
     }
@@ -966,7 +970,10 @@ export function generateConfigPlist(profile: HardwareProfile): string {
     // If any supported discrete GPU exists, the iGPU runs headless (compute only)
     // and the dGPU handles all display output.
     const gpuAssessments = gpuDevices.map(classifyGpu);
-    const headlessIgpu = gpuAssessments.some(a => a.isLikelyDiscrete && a.tier !== 'unsupported');
+    // On laptops, the iGPU ALWAYS drives the internal panel — never headless.
+    // On desktops, headless mode means a supported discrete GPU handles all display output.
+    const headlessIgpu = !profile.isLaptop &&
+        gpuAssessments.some(a => a.isLikelyDiscrete && a.tier !== 'unsupported');
 
     // ── Device-ID spoofing ─────────────────────────────────────────────────
     // Source: Dortania per-gen config.plist pages

@@ -1467,3 +1467,102 @@ describe('VoodooI2C end-to-end agreement', () => {
     expect(kexts).not.toContain('VoodooI2CHID.kext');
   });
 });
+
+// ─── 15. HEADLESS IGPU / LAPTOP DEFENSE-IN-DEPTH ───────────────────────────
+
+describe('Headless iGPU defense — laptops never headless', () => {
+  it('laptop with AMD dGPU still uses display ig-platform-id, not headless', () => {
+    // HP ProBook 450 G2 scenario: Haswell laptop + AMD R5 M255 dGPU
+    const profile = fakeProfile({
+      generation: 'Haswell',
+      isLaptop: true,
+      gpu: 'Intel HD Graphics 4400 / AMD Radeon R5 M255',
+      gpuDevices: [
+        { name: 'Intel HD Graphics 4400', vendorName: 'Intel', vendorId: '8086', deviceId: '0a16' },
+        { name: 'AMD Radeon R5 M255', vendorName: 'AMD', vendorId: '1002', deviceId: '6665' },
+      ],
+    });
+    const plist = generateConfigPlist(profile);
+    // Must use Haswell laptop ig-platform-id (0x0A260006 = BgAmCg==), NOT headless
+    expect(plist).toContain('BgAmCg==');
+    // Must NOT use Haswell headless ig-platform-id (0x04120004 = BAASBA==)
+    expect(plist).not.toContain('BAASBA==');
+  });
+
+  it('laptop with unsupported NVIDIA dGPU still uses display ig-platform-id', () => {
+    const profile = fakeProfile({
+      generation: 'Coffee Lake',
+      isLaptop: true,
+      gpu: 'Intel UHD 630 / NVIDIA GeForce GTX 1050',
+      gpuDevices: [
+        { name: 'Intel UHD 630' },
+        { name: 'NVIDIA GeForce GTX 1050' },
+      ],
+    });
+    const plist = generateConfigPlist(profile);
+    // Must use Coffee Lake laptop ig-platform-id (0x3EA50009 = CQClPg==)
+    expect(plist).toContain('CQClPg==');
+  });
+
+  it('desktop with supported AMD dGPU uses headless ig-platform-id', () => {
+    const profile = fakeProfile({
+      generation: 'Coffee Lake',
+      isLaptop: false,
+      gpu: 'Intel UHD 630 / AMD Radeon RX 580',
+      gpuDevices: [
+        { name: 'Intel UHD 630' },
+        { name: 'AMD Radeon RX 580' },
+      ],
+    });
+    const plist = generateConfigPlist(profile);
+    // Desktop with supported dGPU: headless Coffee Lake (0x3E910003 = AwCRPg==)
+    expect(plist).toContain('AwCRPg==');
+  });
+});
+
+describe('agdpmod=pikera correctness', () => {
+  it('laptop with old AMD dGPU does NOT get agdpmod=pikera', () => {
+    const profile = fakeProfile({
+      generation: 'Haswell',
+      isLaptop: true,
+      smbios: 'MacBookPro11,4',
+      gpu: 'Intel HD Graphics 4400 / AMD Radeon R5 M255',
+      gpuDevices: [
+        { name: 'Intel HD Graphics 4400' },
+        { name: 'AMD Radeon R5 M255' },
+      ],
+    });
+    const plist = generateConfigPlist(profile);
+    expect(plist).not.toContain('agdpmod=pikera');
+  });
+
+  it('desktop iMac with supported AMD RX 580 DOES get agdpmod=pikera', () => {
+    const profile = fakeProfile({
+      generation: 'Coffee Lake',
+      isLaptop: false,
+      smbios: 'iMac20,1',
+      gpu: 'Intel UHD 630 / AMD Radeon RX 580',
+      gpuDevices: [
+        { name: 'Intel UHD 630' },
+        { name: 'AMD Radeon RX 580' },
+      ],
+    });
+    const plist = generateConfigPlist(profile);
+    expect(plist).toContain('agdpmod=pikera');
+  });
+
+  it('desktop iMac with unsupported old AMD R7 does NOT get agdpmod=pikera', () => {
+    const profile = fakeProfile({
+      generation: 'Haswell',
+      isLaptop: false,
+      smbios: 'iMac14,2',
+      gpu: 'Intel HD Graphics 4600 / AMD Radeon R7 250',
+      gpuDevices: [
+        { name: 'Intel HD Graphics 4600' },
+        { name: 'AMD Radeon R7 250' },
+      ],
+    });
+    const plist = generateConfigPlist(profile);
+    expect(plist).not.toContain('agdpmod=pikera');
+  });
+});
