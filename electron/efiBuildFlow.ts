@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import type { HardwareProfile } from './configGenerator.js';
 import type { OpToken } from './taskManager.js';
 
@@ -53,15 +54,15 @@ export interface RunEfiBuildFlowInput {
   allowAcceptedSession?: boolean;
 }
 
-export function cleanupOrphanedBuilds(userDataPath: string, keepPath?: string): number {
+export async function cleanupOrphanedBuilds(userDataPath: string, keepPath?: string): Promise<number> {
   let removed = 0;
   try {
-    const entries = fs.readdirSync(userDataPath, { withFileTypes: true });
+    const entries = await fs.promises.readdir(userDataPath, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory() || !entry.name.startsWith('EFI_Build_')) continue;
       const full = path.join(userDataPath, entry.name);
       if (keepPath && full === keepPath) continue;
-      try { fs.rmSync(full, { recursive: true, force: true }); removed++; } catch (_) {}
+      try { await fs.promises.rm(full, { recursive: true, force: true }); removed++; } catch (_) {}
     }
   } catch (_) {}
   return removed;
@@ -73,7 +74,7 @@ export async function runEfiBuildFlow(
 ): Promise<string> {
   const { profile, allowAcceptedSession } = input;
   const token = deps.registry.create('efi-build');
-  const efiPath = path.resolve(deps.getUserDataPath(), 'EFI_Build_' + Date.now());
+  const efiPath = path.resolve(deps.getUserDataPath(), `EFI_Build_${Date.now()}-${crypto.randomBytes(4).toString('hex')}`);
   deps.log('INFO', 'efi', 'Building EFI', {
     efiPath,
     cpu: profile.cpu,
@@ -114,7 +115,7 @@ export async function runEfiBuildFlow(
     throw deps.createClassifiedIpcError(classified, error);
   }
 
-  cleanupOrphanedBuilds(deps.getUserDataPath(), efiPath);
+  await cleanupOrphanedBuilds(deps.getUserDataPath(), efiPath);
   if (!fs.existsSync(efiPath)) fs.mkdirSync(efiPath, { recursive: true });
 
   try {

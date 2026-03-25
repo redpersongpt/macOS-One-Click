@@ -147,7 +147,10 @@ function checkGitHubRateLimit(): Promise<GitHubRateLimitInfo | null> {
       timeout: 8000,
     }, (res) => {
       let data = '';
-      res.on('data', (c: Buffer) => data += c);
+      res.on('data', (c: Buffer) => {
+        data += c;
+        if (data.length > 65536) { res.destroy(); resolve(null); return; }
+      });
       res.on('end', () => {
         try {
           const json = JSON.parse(data);
@@ -174,8 +177,13 @@ function checkGitHubRateLimit(): Promise<GitHubRateLimitInfo | null> {
 // Uses HEAD requests against GitHub or direct asset URLs to verify each kext
 // has a real delivery path before the build starts.
 
-function probeUrl(urlString: string, timeoutMs = 10_000): Promise<{ reachable: boolean; httpCode?: number; error?: string }> {
+function probeUrl(urlString: string, timeoutMs = 10_000, redirectsLeft = 5): Promise<{ reachable: boolean; httpCode?: number; error?: string }> {
   return new Promise((resolve) => {
+    if (redirectsLeft <= 0) {
+      resolve({ reachable: false, error: 'Too many redirects' });
+      return;
+    }
+
     let parsed: URL;
     try {
       parsed = new URL(urlString);
@@ -196,7 +204,12 @@ function probeUrl(urlString: string, timeoutMs = 10_000): Promise<{ reachable: b
     }, (res: any) => {
       if ([301, 302, 307, 308].includes(res.statusCode) && res.headers.location) {
         res.destroy();
-        probeUrl(res.headers.location, timeoutMs).then(resolve);
+        const redirectTarget: string = res.headers.location;
+        if (isHttps && redirectTarget.startsWith('http://')) {
+          resolve({ reachable: false, error: 'Rejected HTTPS→HTTP redirect (TLS downgrade)' });
+          return;
+        }
+        probeUrl(redirectTarget, timeoutMs, redirectsLeft - 1).then(resolve);
         return;
       }
       res.destroy();

@@ -1,10 +1,11 @@
+import * as crypto from 'node:crypto';
 import * as http from 'node:http';
 import * as https from 'node:https';
 
 export const APPLE_RECOVERY_HOST = 'osrecovery.apple.com';
 export const INTERNET_RECOVERY_USER_AGENT = 'InternetRecovery/1.0';
-export const APPLE_RECOVERY_ROOT_URL = `http://${APPLE_RECOVERY_HOST}/`;
-export const APPLE_RECOVERY_IMAGE_URL = `http://${APPLE_RECOVERY_HOST}/InstallationPayload/RecoveryImage`;
+export const APPLE_RECOVERY_ROOT_URL = `https://${APPLE_RECOVERY_HOST}/`;
+export const APPLE_RECOVERY_IMAGE_URL = `https://${APPLE_RECOVERY_HOST}/InstallationPayload/RecoveryImage`;
 export const APPLE_RECOVERY_MLB_ZERO = '00000000000000000';
 
 export interface AppleRecoveryEndpointProbeResult {
@@ -36,12 +37,7 @@ export type AppleRecoveryTransport = (input: {
 }) => Promise<AppleRecoveryHttpResponse>;
 
 function randomHex(length: number): string {
-  const alphabet = '0123456789ABCDEF';
-  let value = '';
-  for (let i = 0; i < length; i += 1) {
-    value += alphabet[Math.floor(Math.random() * alphabet.length)];
-  }
-  return value;
+  return crypto.randomBytes(length).toString('hex').toUpperCase().slice(0, length);
 }
 
 function readSessionCookie(
@@ -135,9 +131,15 @@ export async function createAppleRecoveryTransport(input: {
       headers: input.headers,
       timeout: input.timeoutMs ?? 15000,
     }, (res) => {
+      const MAX_METADATA_BODY = 10 * 1024 * 1024;
       let body = '';
       res.on('data', (chunk: Buffer) => {
         body += chunk.toString('utf-8');
+        if (body.length > MAX_METADATA_BODY) {
+          res.destroy();
+          reject(new Error('Response body too large'));
+          return;
+        }
       });
       res.on('end', () => {
         resolve({
@@ -179,7 +181,7 @@ export async function probeAppleRecoveryEndpoint(
     return {
       reachable: response.statusCode > 0 && response.statusCode < 500,
       httpCode: response.statusCode,
-      sessionCookie: readSessionCookie(response.headers['set-cookie']) ?? readSessionCookie(response.headers['Set-Cookie']),
+      sessionCookie: readSessionCookie(response.headers['set-cookie']),
     };
   } catch {
     return {

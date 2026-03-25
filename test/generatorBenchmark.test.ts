@@ -138,7 +138,7 @@ describe('Benchmark: SMBIOS correctness', () => {
 describe('Benchmark: ig-platform-id policy', () => {
   const IG_PLATFORM_IDS: Record<string, { display: string; headless: string }> = {
     'Haswell':     { display: 'AwAiDQ==', headless: 'BAASBA==' },
-    'Broadwell':   { display: 'BwAiFg==', headless: 'BgAmFg==' },
+    'Broadwell':   { display: 'BwAiFg==', headless: 'BAAmFg==' },
     'Skylake':     { display: 'AAASGQ==', headless: 'AQASGQ==' },
     'Kaby Lake':   { display: 'AAASWQ==', headless: 'AwASWQ==' },
     'Coffee Lake': { display: 'BwCbPg==', headless: 'AwCRPg==' },

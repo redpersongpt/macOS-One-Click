@@ -129,6 +129,12 @@ app.setPath('userData', path.resolve(app.getPath('appData'), LEGACY_USER_DATA_DI
 
 const execPromise = util.promisify(exec);
 
+const VALID_DEVICE_PATTERN = process.platform === 'win32'
+  ? /^\\\\\.\\PhysicalDrive\d+$|^PHYSICALDRIVE\d+$/i
+  : process.platform === 'darwin'
+  ? /^\/dev\/disk\d+$/
+  : /^\/dev\/(sd[a-z]|nvme\d+n\d+|loop\d+)$/;
+
 /**
  * Robust command execution with optional OpToken support for cancellation.
  */
@@ -256,10 +262,10 @@ const cacheManager = new RecoveryCacheManager(app.getPath('userData'));
 // ── Download Helpers ──────────────────────────────────────────────
 
 function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
+  if (bytes <= 0) return '0 B';
   const k = 1024;
   const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
   return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
 }
 
@@ -801,7 +807,6 @@ async function downloadLatestAppUpdate(): Promise<AppUpdateState> {
   fs.mkdirSync(downloadsDir, { recursive: true });
   const finalPath = path.resolve(downloadsDir, asset.name);
   const tempPath = `${finalPath}.download`;
-  if (fs.existsSync(tempPath)) fs.rmSync(tempPath, { force: true });
 
   setAppUpdateState({
     checking: false,
@@ -1194,6 +1199,7 @@ async function retryWithBackoff<T>(
   label: string,
   checkAborted?: () => void
 ): Promise<T> {
+  if (maxAttempts <= 0) throw new Error('maxAttempts must be >= 1');
   let lastErr: unknown;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     checkAborted?.();
@@ -1316,7 +1322,7 @@ async function probeBiosSettings(): Promise<BIOSStatus> {
     } catch (e) {}
     
     try {
-      const vt = await runProbe('lscpu | grep Virtualization');
+      const vt = await runProbe('LANG=C lscpu | grep Virtualization');
       status.virtualizationEnabled = vt.stdout.includes('VT-x') || vt.stdout.includes('AMD-V');
     } catch (e) {}
   } else if (process.platform === 'darwin') {
@@ -2733,7 +2739,7 @@ function isTrustedRendererNavigation(targetUrl: string): boolean {
 }
 
 function isSafeExternalTarget(targetUrl: string): boolean {
-  return targetUrl.startsWith('https://') || targetUrl.startsWith('http://') || targetUrl.startsWith('mailto:');
+  return targetUrl.startsWith('https://') || targetUrl.startsWith('mailto:');
 }
 
 async function showStartupRecovery(input: StartupFailureEventInput): Promise<void> {
@@ -2993,6 +2999,9 @@ app.whenReady().then(async () => {
     logger.flush();
     const lockFile = path.join(app.getPath('userData'), 'session.lock');
     try { if (fs.existsSync(lockFile)) fs.unlinkSync(lockFile); } catch {}
+    if (process.platform === 'win32') {
+      try { require('child_process').execSync('echo automount enable | diskpart', { timeout: 5000 }); } catch {}
+    }
   });
   hardwareProfileStore = createHardwareProfileStore(app.getPath('userData'));
   const latestHardwareArtifact = hardwareProfileStore.loadLatest();
@@ -3082,7 +3091,13 @@ app.whenReady().then(async () => {
     }
     return state;
   });
-  ipcHandle('save-state', (_event, state: AppState) => saveState(state));
+  ipcHandle('save-state', (_event, state: AppState) => {
+    if (!state || typeof state.currentStep !== 'string' || typeof state.timestamp !== 'number') {
+      log('WARN', 'state', 'save-state rejected: invalid shape', { state });
+      return;
+    }
+    saveState(state);
+  });
   ipcHandle('clear-state', () => { if (fs.existsSync(STATE_FILE)) fs.unlinkSync(STATE_FILE); });
 
   // Hardware profile artifacts — advisory planning inputs only
@@ -3541,6 +3556,7 @@ app.whenReady().then(async () => {
   // Local Partitioning
   ipcHandle('get-hard-drives',   () => withTimeout(diskOps.getHardDrives(), 30_000, 'getHardDrives'));
   ipcHandle('convert-disk-to-gpt', async (_e: Electron.IpcMainInvokeEvent, device: string, confirmed?: boolean) => {
+    if (!VALID_DEVICE_PATTERN.test(device)) throw new Error('Invalid device path');
     if (!confirmed) throw new Error('Disk conversion requires explicit user confirmation');
     const info = await diskOps.getDiskInfo(device);
     if (info.isSystemDisk) {
@@ -3572,6 +3588,7 @@ app.whenReady().then(async () => {
     }
   });
   ipcHandle('shrink-partition', async (_e: Electron.IpcMainInvokeEvent, disk: string, size: number, confirmed?: boolean) => {
+    if (!VALID_DEVICE_PATTERN.test(disk)) throw new Error('Invalid device path');
     if (!confirmed) throw new Error('Partition shrink requires explicit user confirmation');
     // Safety: block system disk and verify partition table before destructive op
     const info = await diskOps.getDiskInfo(disk);
@@ -3650,6 +3667,7 @@ app.whenReady().then(async () => {
     efiPath: string,
     expectedIdentity: Partial<DiskInfo> | undefined,
   ) => {
+    if (!VALID_DEVICE_PATTERN.test(device)) throw new Error('Invalid device path');
     const throwClassified = (message: string): never => {
       const error = new Error(message);
       throw createClassifiedIpcError(classifyError(error), error);
@@ -3759,6 +3777,7 @@ app.whenReady().then(async () => {
 
   // USB flashing — destructive, requires confirmation flag + disk identity
   ipcHandle('flash-usb', async (_event: Electron.IpcMainInvokeEvent, device: string, efiPath: string, confirmed: boolean, confirmationToken?: string | null) => {
+    if (!VALID_DEVICE_PATTERN.test(device)) throw new Error('Invalid device path');
     if (!confirmed) throw new Error('USB flash requires explicit confirmation');
     const { buildProfile, hardwareFingerprint } = requireFlashAuthorizationContext();
     const resolvedEfiPath = path.resolve(efiPath);
@@ -4363,7 +4382,7 @@ app.whenReady().then(async () => {
   });
 
   // Open folder
-  ipcHandle('open-folder', (_event: Electron.IpcMainInvokeEvent, folderPath: string) => shell.openPath(folderPath));
+  ipcHandle('open-folder', (_event: Electron.IpcMainInvokeEvent, folderPath: string) => shell.showItemInFolder(folderPath));
 
   // Log file path + tail + session id
   ipcHandle('get-log-path',       () => path.join(app.getPath('userData'), 'app.log'));

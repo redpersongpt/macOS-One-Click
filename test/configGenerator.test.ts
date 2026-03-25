@@ -324,7 +324,7 @@ describe('getRequiredResources', () => {
       generation: 'Ryzen',
       motherboard: 'MSI B650',
     }));
-    expect(r.ssdts).toContain('SSDT-EC-USBX-DESKTOP.aml');
+    expect(r.ssdts).toContain('SSDT-EC-USBX.aml');
     expect(r.ssdts).not.toContain('SSDT-EC-USBX-AMD.aml');
   });
 
@@ -355,7 +355,7 @@ describe('getRequiredResources', () => {
           generation: 'Ryzen',
           motherboard: 'MSI B650',
         }),
-        expectedSsdts: ['SSDT-EC-USBX-DESKTOP.aml', 'SSDT-CPUR.aml'],
+        expectedSsdts: ['SSDT-EC-USBX.aml', 'SSDT-CPUR.aml'],
       },
       {
         name: 'Coffee Lake',

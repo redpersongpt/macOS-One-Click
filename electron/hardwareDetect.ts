@@ -420,6 +420,7 @@ export function inferIntelIgpuName(cpuName: string): string | null {
     const num = parseInt(match[1]);
     if (num >= 12000) return 'Intel UHD Graphics (12th Gen+)';
     if (num >= 11000) return 'Intel UHD Graphics (11th Gen)';
+    if (num >= 10000 && num < 11000 && (/\bg[147]\b/.test(model) || model.includes('ice lake'))) return 'Intel Iris Plus Graphics (Ice Lake)';
     if (num >= 10000) return 'Intel UHD Graphics 630';
     if (num >= 8000) return 'Intel UHD Graphics 630';
     if (num >= 7000) return 'Intel HD Graphics 620/630';

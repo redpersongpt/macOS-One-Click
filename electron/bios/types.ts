@@ -4,7 +4,7 @@ import type { FirmwareInfo } from '../firmwarePreflight.js';
 export type BiosVendor = 'Generic' | 'HP' | 'Dell' | 'Lenovo';
 export type BiosBackendId = 'generic' | 'hp' | 'dell' | 'lenovo';
 export type BiosSupportLevel = 'manual' | 'assisted' | 'managed';
-export type BiosApplyMode = 'manual' | 'assisted' | 'skipped';
+export type BiosApplyMode = 'manual' | 'assisted' | 'managed' | 'skipped';
 
 // Extended session stage — matches BiosFlowState in stateMachine.ts
 export type BiosSessionStage =

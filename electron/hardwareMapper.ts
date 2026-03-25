@@ -61,7 +61,7 @@ export function detectCpuGeneration(cpuModel: string): HardwareProfile['generati
     if (model.includes('gold')) return 'Coffee Lake';
     if (model.match(/g[45]\d{2}/)) return 'Skylake';
     if (model.match(/g3\d{2}/)) return 'Haswell';
-    if (model.match(/g[2|1]\d{2}/) || model.match(/g[68]\d0/)) return 'Sandy Bridge';
+    if (model.match(/g[12]\d{2}/) || model.match(/g[68]\d0/)) return 'Sandy Bridge';
     return 'Ivy Bridge';
   }
 

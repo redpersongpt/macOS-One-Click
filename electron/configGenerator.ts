@@ -452,9 +452,10 @@ export function getQuirksForGeneration(gen: HardwareProfile['generation'], mothe
             quirks.DevirtualiseMmio = true;
             quirks.AppleCpuPmCfgLock = false;
             quirks.SetupVirtualMap = true;
-            // Z390 boards need ProtectUefiServices — Source: config.plist/coffee-lake.html
+            // Z390 boards need ProtectUefiServices and must disable SetupVirtualMap — Source: config.plist/coffee-lake.html
             if (mb.includes('z390')) {
                 quirks.ProtectUefiServices = true;
+                quirks.SetupVirtualMap = false;
             }
             break;
         case 'Comet Lake':
@@ -788,8 +789,7 @@ export function getRequiredResources(profile: HardwareProfile) {
         // Will be conditionally added if Broadcom card detected
     }
 
-    const mb = profile.motherboard.toLowerCase();
-    const needsAmdCpuSsdt = /\b(a520|b550|a620|b650|x670|x670e|b850|x870|x870e)\b/.test(mb);
+    const needsAmdCpuSsdt = /\b(a520|b550|a620|b650|x670|x670e|b850|x870|x870e)\b/.test(motherboard);
 
     // SSDTs by platform — Source: per-gen config.plist pages
     // Laptops use SSDT-EC-USBX-LAPTOP.aml instead of the desktop variant.
@@ -809,7 +809,7 @@ export function getRequiredResources(profile: HardwareProfile) {
             pushSsdt(ecUsbxSsdt);
             // SSDT-PMC required for 300-series boards (Z370/Z390/H370/B360/H310) for native NVRAM
             // Source: config.plist/coffee-lake.html — "Required for all 300-series motherboards"
-            if (!profile.isLaptop && (mb.includes('z390') || mb.includes('z370') || mb.includes('h370') || mb.includes('b360') || mb.includes('b365') || mb.includes('h310') || mb.includes('q370'))) {
+            if (!profile.isLaptop && (motherboard.includes('z390') || motherboard.includes('z370') || motherboard.includes('h370') || motherboard.includes('b360') || motherboard.includes('b365') || motherboard.includes('h310') || motherboard.includes('q370'))) {
                 pushSsdt('SSDT-PMC.aml');
             }
             // Laptop Coffee Lake+ also needs SSDT-PMC for 300-series mobile chipsets
@@ -817,7 +817,7 @@ export function getRequiredResources(profile: HardwareProfile) {
                 pushSsdt('SSDT-PMC.aml');
             }
             // SSDT-RHUB: USB root hub reset required on Z490 Comet Lake boards — Source: Dortania comet-lake.html
-            if (!profile.isLaptop && profile.generation === 'Comet Lake' && mb.includes('z490')) {
+            if (!profile.isLaptop && profile.generation === 'Comet Lake' && motherboard.includes('z490')) {
                 pushSsdt('SSDT-RHUB.aml');
             }
         } else if (['Haswell', 'Broadwell'].includes(profile.generation)) {
@@ -860,7 +860,7 @@ export function getRequiredResources(profile: HardwareProfile) {
             pushSsdt('SSDT-EC.aml');
         }
     } else if (profile.architecture === 'AMD') {
-        pushSsdt('SSDT-EC-USBX-DESKTOP.aml');
+        pushSsdt(ecUsbxSsdt);
         if (needsAmdCpuSsdt) {
             pushSsdt('SSDT-CPUR.aml');
         }
@@ -875,6 +875,7 @@ export function getRequiredResources(profile: HardwareProfile) {
 // required by the macOS 26 kernel and are not supported by any valid SMBIOS on Tahoe.
 // Source: Dortania tahoe.html compatibility table.
 const TAHOE_UNSUPPORTED_GENERATIONS = new Set<HardwareProfile['generation']>([
+    'Wolfdale', 'Yorkfield', 'Nehalem', 'Westmere', 'Arrandale', 'Clarkdale',
     'Penryn', 'Sandy Bridge', 'Ivy Bridge', 'Haswell', 'Broadwell',
 ]);
 
@@ -949,8 +950,8 @@ export function generateConfigPlist(profile: HardwareProfile): string {
     }
 
     // CPUID spoofing for unsupported Intel gens
-    let cpuid1Data = "AAAAAAAAAAAAAAAAAAAA";
-    let cpuid1Mask = "AAAAAAAAAAAAAAAAAAAA";
+    let cpuid1Data = "AAAAAAAAAAAAAAAAAAAAAA==";
+    let cpuid1Mask = "AAAAAAAAAAAAAAAAAAAAAA==";
     // Rocket Lake (11th gen) needs Comet Lake CPUID spoof — unsupported CPUID in macOS
     // Alder/Raptor Lake also need spoofing — Source: Dortania per-gen guides
     if (['Rocket Lake', 'Alder Lake', 'Raptor Lake'].includes(profile.generation)) {
@@ -1031,7 +1032,7 @@ export function generateConfigPlist(profile: HardwareProfile): string {
             'Sandy Bridge':'AAAFAA==', // 0x00050000
             'Ivy Bridge':  'BwBiAQ==', // 0x01620007
             'Haswell':     'BAASBA==', // 0x04120004
-            'Broadwell':   'BgAmFg==', // 0x16260006 (no Dortania-specified desktop headless; using mobile fallback)
+            'Broadwell':   'BAAmFg==', // 0x16260004 — Dortania desktop headless
             'Skylake':     'AQASGQ==', // 0x19120001
             'Kaby Lake':   'AwASWQ==', // 0x59120003
             'Coffee Lake': 'AwCRPg==', // 0x3E910003
@@ -1093,7 +1094,7 @@ export function generateConfigPlist(profile: HardwareProfile): string {
         : 'PciRoot(0x0)/Pci(0x1b,0x0)';
 
     // Audio layout-id as base64
-    const layoutIdBase64 = btoa(String.fromCharCode(audioLayoutId, 0, 0, 0));
+    const layoutIdBase64 = Buffer.from([audioLayoutId & 0xFF, (audioLayoutId >> 8) & 0xFF, 0, 0]).toString('base64');
 
     // ── ACPI Delete entries ──────────────────────────────────────────────────
     // Sandy Bridge / Ivy Bridge: delete CpuPm and Cpu0Ist ACPI tables

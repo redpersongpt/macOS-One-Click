@@ -58,6 +58,8 @@ export function parseMacOSVersion(os: string): number {
   }
 
   const versionMatch = lower.match(/(\d+(?:\.\d+)?)/);
+  // Default to 15 (Sequoia) — the current target version. Returning null would
+  // require updating all callers that assume a numeric return. Intentional.
   return versionMatch ? parseFloat(versionMatch[1]) : 15;
 }
 

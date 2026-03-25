@@ -98,6 +98,7 @@ async function getFreeSpaceMB(targetPath: string): Promise<number> {
   try {
     if (process.platform === 'win32') {
       const drive = targetPath.split(':')[0];
+      if (!/^[A-Za-z]$/.test(drive)) return 0;
       const { stdout } = await execPromise(`powershell -NoProfile -Command "(Get-PSDrive -Name '${drive}' -ErrorAction SilentlyContinue).Free"`);
       return Math.floor(parseInt(stdout.trim()) / 1024 / 1024) || 0;
     } else {

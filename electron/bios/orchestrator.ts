@@ -215,19 +215,22 @@ function getAllowedApplyModes(supportLevel: BiosSupportLevel, safeMode: boolean)
   if (supportLevel === 'assisted' || (supportLevel === 'managed' && safeMode)) {
     return ['manual', 'assisted', 'skipped'];
   }
+  if (supportLevel === 'managed' && !safeMode) {
+    return ['manual', 'assisted', 'managed', 'skipped'];
+  }
   return ['manual', 'assisted', 'skipped'];
 }
 
 function getDefaultApplyMode(supportLevel: BiosSupportLevel, safeMode: boolean): BiosApplyMode {
   if (supportLevel === 'manual') return 'manual';
   if (safeMode) return 'manual';
-  return supportLevel === 'managed' ? 'assisted' : 'assisted';
+  return supportLevel === 'managed' ? 'managed' : 'assisted';
 }
 
 function selectOverallSupportLevel(levels: BiosSupportLevel[]): BiosSupportLevel {
-  if (levels.includes('managed')) return 'managed';
+  if (levels.includes('manual')) return 'manual';
   if (levels.includes('assisted')) return 'assisted';
-  return 'manual';
+  return 'managed';
 }
 
 export function createDefaultSelections(settings: Pick<BiosSettingPlan, 'id' | 'supportLevel'>[], safeMode: boolean): Record<BiosSettingId, BiosSettingSelection> {

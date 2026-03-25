@@ -360,9 +360,9 @@ describe('Dortania: SSDT selection', () => {
   });
 
   // AMD — Source: Dortania AMD/zen.html
-  it('AMD Ryzen: SSDT-EC-USBX-DESKTOP', () => {
+  it('AMD Ryzen desktop: SSDT-EC-USBX (laptop-aware via ecUsbxSsdt)', () => {
     const r = getRequiredResources(profile({ architecture: 'AMD', generation: 'Ryzen', coreCount: 8 }));
-    expect(r.ssdts).toContain('SSDT-EC-USBX-DESKTOP.aml');
+    expect(r.ssdts).toContain('SSDT-EC-USBX.aml');
   });
 
   // Laptop SSDTs — Source: Dortania laptop config.plist pages

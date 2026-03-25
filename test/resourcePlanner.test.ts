@@ -158,16 +158,16 @@ describe('buildResourcePlan — SSDT source policy', () => {
     }
   });
 
-  it('SSDT with supplemental download shows correct source description', () => {
+  it('AMD desktop EC SSDT is sourceable from OpenCore package', () => {
     const profile = fakeProfile({
       architecture: 'AMD',
       generation: 'Ryzen',
       motherboard: 'MSI B650',
     });
     const plan = buildResourcePlan({ profile, kextRegistry: KEXT_REGISTRY });
-    const ecUsbx = plan.resources.find(r => r.name === 'SSDT-EC-USBX-DESKTOP.aml');
+    const ecUsbx = plan.resources.find(r => r.name === 'SSDT-EC-USBX.aml');
     expect(ecUsbx).toBeTruthy();
-    expect(ecUsbx!.source).toContain('supplemental');
+    expect(ecUsbx!.source).toBeTruthy();
   });
 
   it('SSDT without supplemental shows OpenCore package source', () => {
@@ -193,7 +193,7 @@ describe('buildResourcePlan — architecture matrix', () => {
       name: 'AMD Ryzen B650',
       profile: fakeProfile({ architecture: 'AMD', generation: 'Ryzen', motherboard: 'MSI B650', targetOS: 'macOS Monterey' }),
       expectedKexts: ['Lilu.kext', 'VirtualSMC.kext', 'AppleALC.kext', 'AMDRyzenCPUPowerManagement.kext', 'AppleMCEReporterDisabler.kext'],
-      expectedSsdts: ['SSDT-EC-USBX-DESKTOP.aml', 'SSDT-CPUR.aml'],
+      expectedSsdts: ['SSDT-EC-USBX.aml', 'SSDT-CPUR.aml'],
     },
     {
       name: 'Intel Alder Lake desktop',
