@@ -139,7 +139,11 @@ export function normalizeHardwareProfile(value: unknown): HardwareProfile {
     'bootArgs',
     'isLaptop',
     'isVM',
+    'audioCodec',
     'audioLayoutId',
+    'nicChipset',
+    'wifiChipset',
+    'inputStack',
     'strategy',
     'scanConfidence',
   ], 'profile');
