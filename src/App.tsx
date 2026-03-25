@@ -234,6 +234,7 @@ const debugError = (...args: unknown[]) => {
 
 export default function App() {
   const [step, _setStepRaw] = useState<StepId>('landing');
+  const stepBeforeTroubleshootingRef = useRef<StepId>('landing');
   const [progress, setProgress] = useState(0);
   const [statusText, setStatus] = useState('');
   const [profile, setProfile] = useState<HardwareProfile | null>(null);
@@ -1131,6 +1132,16 @@ export default function App() {
     if (!result?.ok) {
       return;
     }
+  };
+
+  const openTroubleshooting = () => {
+    stepBeforeTroubleshootingRef.current = step;
+    _setStepRaw('troubleshooting' as StepId);
+  };
+
+  const closeTroubleshooting = () => {
+    const returnTo = stepBeforeTroubleshootingRef.current;
+    _setStepRaw(returnTo);
   };
 
   const refreshBiosState = async (
@@ -3019,7 +3030,7 @@ export default function App() {
                   <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700 ease-in-out" />
                   Begin Installation
                 </button>
-                <button onClick={() => setStep('troubleshooting')} className="flex min-w-0 flex-1 items-center justify-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-10 py-5 text-lg font-bold text-white transition-all hover:bg-white/10 hover:scale-105 active:scale-95 cursor-pointer backdrop-blur-md">
+                <button onClick={() => openTroubleshooting()} className="flex min-w-0 flex-1 items-center justify-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-10 py-5 text-lg font-bold text-white transition-all hover:bg-white/10 hover:scale-105 active:scale-95 cursor-pointer backdrop-blur-md">
                   <HelpCircle className="w-5 h-5 text-white/40" /> Troubleshoot
                 </button>
               </div>
@@ -3069,7 +3080,7 @@ export default function App() {
               {SIDEBAR_STEPS.map(s => (React.createElement(SidebarItem as any, { key: s.id, id: s.id, label: s.label, icon: s.icon })))}
 
               <div className="mt-2 pt-4 border-t border-white/5">
-                <button onClick={() => setStep('troubleshooting')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all cursor-pointer ${step === 'troubleshooting' ? 'bg-white/10 text-white' : 'text-[#555] hover:bg-white/5'}`}>
+                <button onClick={() => openTroubleshooting()} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all cursor-pointer ${step === 'troubleshooting' ? 'bg-white/10 text-white' : 'text-[#555] hover:bg-white/5'}`}>
                   <HelpCircle className="w-3.5 h-3.5" /> Troubleshooting
                 </button>
               </div>
@@ -3521,7 +3532,7 @@ export default function App() {
                 {/* FLASHING */}
                 {step === 'flashing' && (
                   <motion.div key="flash" initial={stepEnter} animate={stepActive} exit={stepExit} transition={STEP_TRANSITION} className="h-full">
-                    <ProgressStep title="Creating Bootable USB" subtitle="Writing OpenCore EFI and macOS recovery to your drive." icon={Usb} progress={progress} statusText={statusText} stages={flashStages} milestones={flashMilestones} onTroubleshoot={() => setStep('troubleshooting')} />
+                    <ProgressStep title="Creating Bootable USB" subtitle="Writing OpenCore EFI and macOS recovery to your drive." icon={Usb} progress={progress} statusText={statusText} stages={flashStages} milestones={flashMilestones} onTroubleshoot={() => openTroubleshooting()} />
                   </motion.div>
                 )}
 
@@ -3532,7 +3543,7 @@ export default function App() {
                       onOpenFolder={() => efiPath && window.electron.openFolder(efiPath)}
                       onProductionLock={async () => { if (efiPath) { try { await window.electron.enableProductionLock(efiPath, profile?.targetOS); setProdLock(true); } catch (e: any) { setErrorWithSuggestion(e.message || 'Failed to enable production lock'); } } }}
                       onRestart={() => window.electron.restartComputer().catch(() => {})}
-                      onTroubleshoot={() => setStep('troubleshooting')} />
+                      onTroubleshoot={() => openTroubleshooting()} />
 
                     {/* System summary line */}
                     {efiReport && profile && (
@@ -3588,7 +3599,7 @@ export default function App() {
                         <h2 className="text-4xl font-bold text-white mb-1">Troubleshooting</h2>
                         <p className="text-[#888] text-sm">{troubleshootingData.length} issues from Dortania's guides.</p>
                       </div>
-                      <button onClick={() => setStep('landing')} className="p-2 hover:bg-white/5 rounded-full transition-colors cursor-pointer"><X className="w-5 h-5 text-[#444]" /></button>
+                      <button onClick={closeTroubleshooting} className="p-2 hover:bg-white/5 rounded-full transition-colors cursor-pointer"><X className="w-5 h-5 text-[#444]" /></button>
                     </div>
                     <div className="relative flex-shrink-0">
                       <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#555]" />

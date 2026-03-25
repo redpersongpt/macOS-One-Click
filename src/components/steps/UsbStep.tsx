@@ -651,7 +651,7 @@ function SelectionReviewPanel({
       initial={{ opacity: 0, x: 20 }}
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: -20 }}
-      className="space-y-5"
+      className="space-y-5 max-h-[calc(100vh-12rem)] overflow-y-auto pr-1"
     >
       {/* Back link + heading */}
       <div>
@@ -1004,12 +1004,12 @@ export default function UsbStep({
             <div className="border-t border-white/5 pt-3">
               <button
                 onClick={() => setAdvancedOpen(x => !x)}
-                className="flex items-center gap-2 text-xs text-white/30 hover:text-white/55 transition-colors cursor-pointer px-1"
+                className="w-full flex items-center justify-center gap-2.5 py-3 px-4 text-sm font-semibold rounded-xl border border-amber-500/20 bg-amber-500/8 text-amber-300/80 hover:bg-amber-500/15 hover:text-amber-200 transition-all cursor-pointer"
               >
-                <Eye className="w-3.5 h-3.5" />
-                Show advanced devices ({suspiciousDrives.length} hidden)
+                <Eye className="w-4 h-4" />
+                {advancedOpen ? 'Hide' : 'Show'} {suspiciousDrives.length} unverified {suspiciousDrives.length === 1 ? 'drive' : 'drives'}
                 <motion.span animate={{ rotate: advancedOpen ? 180 : 0 }}>
-                  <ChevronDown className="w-3.5 h-3.5" />
+                  <ChevronDown className="w-4 h-4" />
                 </motion.span>
               </button>
 
