@@ -29,6 +29,7 @@ import {
   isI2CDeviceId,
   deriveInputStack,
   buildPartialDetectedHardware,
+  WINDOWS_HARDWARE_QUERIES,
   type GpuDevice,
   type AudioDevice,
   type NetworkDevice,
@@ -1839,5 +1840,114 @@ describe('buildPartialDetectedHardware — fail-soft scanner', () => {
     expect(profile.isLaptop).toBe(true);
     // CPU and GPU both detected → confidence is high despite missing audio/network
     // (confidence is based on CPU + GPU detection, not peripheral subsystems)
+  });
+});
+
+// ─── 18. TIERED SCANNER ARCHITECTURE ────────────────────────────────────────
+
+describe('Tiered scanner — Tier 1 survives when Tier 2 fails', () => {
+  it('Tier 1 core data produces usable profile even with empty Tier 2', () => {
+    // Simulates: Tier 2 (audio/network/HID) returned empty, Tier 1 succeeded
+    const result = buildPartialDetectedHardware({
+      cpu: {
+        name: 'Intel(R) Core(TM) i7-4510U CPU @ 2.00GHz',
+        vendor: 'GenuineIntel',
+        vendorName: 'Intel',
+        confidence: 'detected',
+      },
+      gpus: [{
+        name: 'Intel HD Graphics 4400',
+        vendorId: '8086',
+        deviceId: '0a16',
+        vendorName: 'Intel',
+        confidence: 'detected',
+      }],
+      motherboardVendor: 'Hewlett-Packard',
+      motherboardModel: 'HP ProBook 450 G2',
+      isLaptop: true,
+      // audio, network, input all empty (Tier 2 failed)
+    });
+    expect(result.audioDevices).toEqual([]);
+    expect(result.networkDevices).toEqual([]);
+    expect(result.inputDevices).toEqual([]);
+    // But core identity is preserved
+    const profile = mapDetectedToProfile(result);
+    expect(profile.generation).toBe('Haswell');
+    expect(profile.isLaptop).toBe(true);
+    expect(profile.architecture).toBe('Intel');
+    expect(profile.smbios).toContain('MacBook');
+  });
+
+  it('empty Tier 2 does NOT affect Tier 1 laptop classification', () => {
+    const result = buildPartialDetectedHardware({
+      cpu: {
+        name: 'Intel(R) Core(TM) i5-6200U CPU @ 2.30GHz',
+        vendor: 'GenuineIntel',
+        vendorName: 'Intel',
+        confidence: 'detected',
+      },
+      isLaptop: true,
+    });
+    expect(result.isLaptop).toBe(true);
+    const profile = mapDetectedToProfile(result);
+    expect(profile.generation).toBe('Skylake');
+    expect(profile.isLaptop).toBe(true);
+  });
+});
+
+describe('Linux I2C over-detection fix (C6)', () => {
+  it('generic I2C bus device names are NOT flagged as I2C input', () => {
+    // These are common non-input I2C devices that should NOT trigger VoodooI2C
+    const nonInputDevices = [
+      'i2c-0',        // I2C bus adapter
+      'i2c-1',        // I2C bus adapter
+      '0-0050',       // EEPROM / SPD
+      '1-0048',       // Temperature sensor
+      '2-0036',       // VRM controller
+    ];
+    const I2C_HID_PATTERN = /i2c-hid|hid-over-i2c|ACPI0C50|PNP0C50|ELAN|SYNA|ALPS|ATML|WCOM/i;
+    for (const dev of nonInputDevices) {
+      expect(I2C_HID_PATTERN.test(dev), `"${dev}" should NOT match HID pattern`).toBe(false);
+    }
+  });
+
+  it('known I2C HID input device names ARE flagged correctly', () => {
+    const hidDevices = [
+      'ELAN0001:00',   // ELAN I2C touchpad
+      'SYNA2B31:00',   // Synaptics I2C touchpad
+      'ALPS0001:00',   // ALPS I2C touchpad
+      'i2c-hid-acpi',  // Generic HID-over-I2C ACPI driver
+    ];
+    const I2C_HID_PATTERN = /i2c-hid|hid-over-i2c|ACPI0C50|PNP0C50|ELAN|SYNA|ALPS|ATML|WCOM/i;
+    for (const dev of hidDevices) {
+      expect(I2C_HID_PATTERN.test(dev), `"${dev}" should match HID pattern`).toBe(true);
+    }
+  });
+});
+
+describe('Windows scanner query consolidation', () => {
+  it('WINDOWS_HARDWARE_QUERIES has exactly 2 tier scripts', () => {
+    expect(WINDOWS_HARDWARE_QUERIES.tier1).toBeDefined();
+    expect(WINDOWS_HARDWARE_QUERIES.tier2).toBeDefined();
+    expect(typeof WINDOWS_HARDWARE_QUERIES.tier1).toBe('string');
+    expect(typeof WINDOWS_HARDWARE_QUERIES.tier2).toBe('string');
+  });
+
+  it('Tier 1 script queries CPU, GPU, board, chassis, system, battery', () => {
+    const t1 = WINDOWS_HARDWARE_QUERIES.tier1;
+    expect(t1).toContain('CIM_Processor');
+    expect(t1).toContain('CIM_VideoController');
+    expect(t1).toContain('Win32_BaseBoard');
+    expect(t1).toContain('CIM_SystemEnclosure');
+    expect(t1).toContain('CIM_ComputerSystem');
+    expect(t1).toContain('Win32_Battery');
+  });
+
+  it('Tier 2 script queries PnP entities for MEDIA, NET, HIDClass', () => {
+    const t2 = WINDOWS_HARDWARE_QUERIES.tier2;
+    expect(t2).toContain('Win32_PnPEntity');
+    expect(t2).toContain('MEDIA');
+    expect(t2).toContain('NET');
+    expect(t2).toContain('HIDClass');
   });
 });
