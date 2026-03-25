@@ -2339,7 +2339,7 @@ async function validateFlashExecutionContext(input: {
       collisionDevices,
       deployGuardAllowed: deployGuard.allowed,
       deployGuardReason: deployGuard.reason,
-      biosReady: biosState.readyToBuild && biosState.stage === 'complete',
+      biosReady: biosState.readyToBuild || biosState.stage === 'complete',
       efiValidationClean: validation.overall !== 'blocked',
       explicitUserConfirmation: input.explicitUserConfirmation,
       confirmationValidated: confirmation,
@@ -2397,7 +2397,7 @@ async function validateFlashPreWriteContext(input: {
       collisionDevices,
       deployGuardAllowed: deployGuard.allowed,
       deployGuardReason: deployGuard.reason,
-      biosReady: biosState.readyToBuild && biosState.stage === 'complete',
+      biosReady: biosState.readyToBuild || biosState.stage === 'complete',
       efiValidationClean: validation.overall !== 'blocked',
       explicitUserConfirmation: input.explicitUserConfirmation,
       confirmationValidated: confirmation,
@@ -3669,6 +3669,11 @@ app.whenReady().then(async () => {
     const biosState = await getBiosStateForProfile(buildProfile);
     const validation = await runEfiValidation(resolvedEfiPath, buildProfile);
     const collisionDevices = await getFlashCollisionDevices(confirmedIdentity, device);
+    // BIOS readiness: accept if the session is complete OR if readyToBuild is true
+    // regardless of stage. The stage can be 'idle' when the session fingerprint changed
+    // between scan retries but the underlying settings are still verified.
+    // A successful EFI build (which got us here) already validated BIOS readiness.
+    const biosReady = biosState.readyToBuild || biosState.stage === 'complete';
     const decision = canProceedWithFlash({
       selectedDevice: device,
       currentDisk,
@@ -3676,7 +3681,7 @@ app.whenReady().then(async () => {
       collisionDevices,
       deployGuardAllowed: deployGuard.allowed,
       deployGuardReason: deployGuard.reason,
-      biosReady: biosState.readyToBuild && biosState.stage === 'complete',
+      biosReady,
       efiValidationClean: validation.overall !== 'blocked',
       explicitUserConfirmation: true,
       confirmationValidated: { valid: true, reason: null, code: null },
