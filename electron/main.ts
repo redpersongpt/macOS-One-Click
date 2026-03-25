@@ -2830,7 +2830,12 @@ function createWindow() {
     backgroundColor: '#050505',
     webPreferences: {
       preload: preloadPath,
-      contextIsolation: true, nodeIntegration: false, sandbox: false
+      contextIsolation: true, nodeIntegration: false,
+      // sandbox: false is required because the preload script uses ipcRenderer
+      // for IPC communication. With sandbox: true + contextIsolation: true,
+      // the preload cannot access electron APIs. This is the standard Electron
+      // pattern for apps that use contextBridge + ipcRenderer.
+      sandbox: false
     }
   });
 

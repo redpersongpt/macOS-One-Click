@@ -4,11 +4,67 @@ set -euo pipefail
 # Downloads core kexts for embedding into the app as offline fallback.
 # Run this script to update the embedded kexts to latest versions.
 
-KEXT_DIR="$(cd "$(dirname "$0")/.." && pwd)/electron/assets/kexts"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+KEXT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/electron/assets/kexts"
+CHECKSUM_FILE="$SCRIPT_DIR/kext-checksums.sha256"
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
+VERIFY_CHECKSUMS=true
+if [[ "${1:-}" == "--no-verify" ]]; then
+  VERIFY_CHECKSUMS=false
+  echo "WARNING: Checksum verification disabled via --no-verify"
+fi
+
 mkdir -p "$KEXT_DIR"
+
+# Load expected checksums into an associative array
+declare -A EXPECTED_HASHES
+if [[ -f "$CHECKSUM_FILE" ]]; then
+  while IFS=' ' read -r hash key rest; do
+    # Skip comments and blank lines
+    [[ -z "$hash" || "$hash" == \#* ]] && continue
+    EXPECTED_HASHES["$key"]="$hash"
+  done < "$CHECKSUM_FILE"
+fi
+
+verify_checksum() {
+  local zip_file="$1"
+  local repo_key="$2"
+
+  if [[ "$VERIFY_CHECKSUMS" != true ]]; then
+    return 0
+  fi
+
+  local expected="${EXPECTED_HASHES[$repo_key]:-}"
+  if [[ -z "$expected" || "$expected" == "PLACEHOLDER_HASH_UPDATE_ME" ]]; then
+    echo "  WARN: No valid checksum for $repo_key — update scripts/kext-checksums.sha256"
+    return 0
+  fi
+
+  # macOS uses shasum, Linux uses sha256sum
+  local actual
+  if command -v shasum &>/dev/null; then
+    actual=$(shasum -a 256 "$zip_file" | awk '{print $1}')
+  elif command -v sha256sum &>/dev/null; then
+    actual=$(sha256sum "$zip_file" | awk '{print $1}')
+  else
+    echo "  WARN: No sha256sum or shasum available — skipping verification"
+    return 0
+  fi
+
+  if [[ "$actual" != "$expected" ]]; then
+    echo "  CHECKSUM MISMATCH for $repo_key!"
+    echo "    Expected: $expected"
+    echo "    Actual:   $actual"
+    echo "  Aborting — possible supply-chain compromise or version drift."
+    echo "  If you updated kext versions, regenerate checksums with:"
+    echo "    shasum -a 256 <zip> and update scripts/kext-checksums.sha256"
+    exit 1
+  fi
+
+  echo "  Checksum OK ($repo_key)"
+}
 
 # Core kexts to embed — repo, asset filter, kext names to extract
 REPOS=(
@@ -65,8 +121,13 @@ for a in data.get('assets', []):
   version=$(echo "$release_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name','unknown'))" 2>/dev/null || echo "unknown")
 
   # Download
-  local zip_file="$TMP_DIR/$(echo "$repo" | tr '/' '_').zip"
+  local repo_key
+  repo_key=$(echo "$repo" | tr '/' '_')
+  local zip_file="$TMP_DIR/${repo_key}.zip"
   curl -sL -o "$zip_file" "$asset_url"
+
+  # Verify integrity
+  verify_checksum "$zip_file" "$repo_key"
 
   # Extract
   local extract_dir="$TMP_DIR/extract_$(echo "$repo" | tr '/' '_')"

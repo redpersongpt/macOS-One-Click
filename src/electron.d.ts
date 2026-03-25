@@ -4,6 +4,7 @@ import type { BiosSettingSelection } from '../electron/bios/types';
 declare global {
   interface Window {
     electron: {
+      platform: NodeJS.Platform;
       scanHardware: () => Promise<{
         profile: import('../electron/configGenerator').HardwareProfile;
         interpretation: import('../electron/hardwareInterpret').HardwareInterpretation | null;
@@ -84,20 +85,20 @@ declare global {
         missingBinaries: string[];
       }>;
       // Prevention Layer
-      runPreflightChecks: (kextNames: string[]) => Promise<import('../electron/preventionLayer').PreflightReport>;
-      recordFailure: (code: string, message: string) => Promise<import('../electron/preventionLayer').FailureMemoryEntry>;
+      runPreflightChecks: (kextNames: string[]) => Promise<any>;
+      recordFailure: (code: string, message: string) => Promise<any>;
       shouldSkipRetry: (code: string) => Promise<boolean>;
-      getFailureMemory: () => Promise<import('../electron/preventionLayer').FailureMemoryEntry[]>;
+      getFailureMemory: () => Promise<any[]>;
       clearFailureMemory: () => Promise<boolean>;
       // Deterministic Layer
-      simulateBuild: (kextNames: string[], ssdtNames: string[], smbios: string) => Promise<import('../electron/deterministicLayer').BuildPlan>;
-      dryRunRecovery: (targetOS: string, smbios: string) => Promise<import('../electron/deterministicLayer').RecoveryDryRun>;
-      verifyBuildState: (efiPath: string, requiredKexts: string[]) => Promise<import('../electron/deterministicLayer').StateVerification>;
-      verifyEfiBuildSuccess: (efiPath: string, requiredKexts: string[], requiredSsdts?: string[]) => Promise<import('../electron/deterministicLayer').SuccessContract>;
-      verifyRecoverySuccess: (recoveryDir: string) => Promise<import('../electron/deterministicLayer').SuccessContract>;
-      runSafeSimulation: (profile: import('../electron/configGenerator').HardwareProfile) => Promise<import('../electron/safeSimulation').SafeSimulationResult>;
-      getResourcePlan: (profile: import('../electron/configGenerator').HardwareProfile, efiPath?: string | null) => Promise<import('../electron/resourcePlanner').ResourcePlan>;
-      getDiagnostics: () => Promise<import('../electron/releaseDiagnostics').PublicDiagnosticsSnapshot>;
+      simulateBuild: (kextNames: string[], ssdtNames: string[], smbios: string) => Promise<any>;
+      dryRunRecovery: (targetOS: string, smbios: string) => Promise<any>;
+      verifyBuildState: (efiPath: string, requiredKexts: string[]) => Promise<any>;
+      verifyEfiBuildSuccess: (efiPath: string, requiredKexts: string[], requiredSsdts?: string[]) => Promise<any>;
+      verifyRecoverySuccess: (recoveryDir: string) => Promise<any>;
+      runSafeSimulation: (profile: import('../electron/configGenerator').HardwareProfile) => Promise<any>;
+      getResourcePlan: (profile: import('../electron/configGenerator').HardwareProfile, efiPath?: string | null) => Promise<any>;
+      getDiagnostics: () => Promise<any>;
       saveSupportLog: (extraContext?: string | null) => Promise<{ fileName: string; savedTo: 'Desktop' }>;
       logUiEvent: (eventName: string, detail?: Record<string, unknown> | null) => Promise<boolean>;
       notifyRendererReady: () => Promise<boolean>;

@@ -478,7 +478,8 @@ export function createDiskOps(log: LogFunction): DiskOps {
       const parsed = JSON.parse(stdout || '[]');
       if (Array.isArray(parsed)) return parsed;
       return parsed ? [parsed] : [];
-    } catch {
+    } catch (e) {
+      log('DEBUG', 'diskOps', 'listWindowsDisks failed', { error: (e as Error)?.message });
       return [];
     }
   }
@@ -490,7 +491,8 @@ export function createDiskOps(log: LogFunction): DiskOps {
         register
       );
       return stdout.trim();
-    } catch {
+    } catch (e) {
+      log('DEBUG', 'diskOps', 'getWindowsDriveLetterForLabel failed', { diskNum, label, error: (e as Error)?.message });
       return '';
     }
   }
@@ -513,7 +515,8 @@ export function createDiskOps(log: LogFunction): DiskOps {
         fileSystemLabel: typeof row.FileSystemLabel === 'string' ? row.FileSystemLabel.trim() : '',
         sizeBytes: typeof row.SizeBytes === 'number' ? row.SizeBytes : Number(row.SizeBytes ?? 0),
       })).filter((row) => Number.isFinite(row.partitionNumber) && row.partitionNumber > 0);
-    } catch {
+    } catch (e) {
+      log('DEBUG', 'diskOps', 'getWindowsPreparedPartitions failed', { diskNum, error: (e as Error)?.message });
       return [];
     }
   }
@@ -641,7 +644,9 @@ export function createDiskOps(log: LogFunction): DiskOps {
         }))
         .filter((p) => Number.isFinite(p.partitionNumber) && p.partitionNumber > 0);
       target = selectWindowsPrimaryDataPartition(partitions);
-    } catch {}
+    } catch (e) {
+      log('DEBUG', 'diskOps', 'shrink target partition detection failed', { diskNum, error: (e as Error)?.message });
+    }
     return target != null ? String(target) : '';
   }
 
@@ -826,7 +831,8 @@ export function createDiskOps(log: LogFunction): DiskOps {
       return children
         .filter((c: any) => c?.type === 'part' && typeof c?.name === 'string')
         .map((c: any) => c.name);
-    } catch {
+    } catch (e) {
+      log('DEBUG', 'diskOps', 'listLinuxPartitions parse failed', { device, error: (e as Error)?.message });
       return [];
     }
   }
@@ -835,7 +841,8 @@ export function createDiskOps(log: LogFunction): DiskOps {
     try {
       const { stdout } = await runCmd(`${command} | plutil -convert json -o - -`, register);
       return JSON.parse(stdout);
-    } catch {
+    } catch (e) {
+      log('DEBUG', 'diskOps', 'readDarwinJson failed', { command: command.slice(0, 80), error: (e as Error)?.message });
       return null;
     }
   }
@@ -898,7 +905,8 @@ export function createDiskOps(log: LogFunction): DiskOps {
         identityConfidence: item.serial ? 'strong' : identityFieldsUsed.length >= 5 ? 'medium' : 'weak',
         identityFieldsUsed,
       };
-    } catch {
+    } catch (e) {
+      log('DEBUG', 'diskOps', 'getLinuxIdentity failed', { device, error: (e as Error)?.message });
       return {};
     }
   }
@@ -924,7 +932,8 @@ export function createDiskOps(log: LogFunction): DiskOps {
         identityConfidence: info.SerialNumber ? 'strong' : identityFieldsUsed.length >= 5 ? 'medium' : 'weak',
         identityFieldsUsed,
       };
-    } catch {
+    } catch (e) {
+      log('DEBUG', 'diskOps', 'getWindowsIdentity failed', { device, error: (e as Error)?.message });
       return {};
     }
   }
@@ -957,7 +966,9 @@ export function createDiskOps(log: LogFunction): DiskOps {
         const n = stdout.trim();
         return n ? `\\\\.\\PhysicalDrive${n}` : '';
       }
-    } catch {}
+    } catch (e) {
+      log('DEBUG', 'diskOps', 'getSystemDiskId failed', { error: (e as Error)?.message });
+    }
     return '';
   }
 
@@ -1033,10 +1044,14 @@ export function createDiskOps(log: LogFunction): DiskOps {
             for (const v of arr) {
               if (v.DriveLetter) mounts.push(`${v.DriveLetter}:`);
             }
-          } catch {}
+          } catch (e) {
+            log('DEBUG', 'diskOps', 'getMountedPartitions: Windows volume JSON parse failed', { device, error: (e as Error)?.message });
+          }
         }
       }
-    } catch {}
+    } catch (e) {
+      log('DEBUG', 'diskOps', 'getMountedPartitions failed', { device, error: (e as Error)?.message });
+    }
     return mounts;
   }
 
@@ -1056,7 +1071,10 @@ export function createDiskOps(log: LogFunction): DiskOps {
           return parseInt(stdout.trim()) || 0;
         }
       }
-    } catch { return 0; }
+    } catch (e) {
+      log('DEBUG', 'diskOps', 'getDeviceSize failed', { device, error: (e as Error)?.message });
+      return 0;
+    }
     return 0;
   }
 
@@ -1187,7 +1205,9 @@ export function createDiskOps(log: LogFunction): DiskOps {
           return stdout.trim() || '';
         }
       }
-    } catch {}
+    } catch (e) {
+      log('DEBUG', 'diskOps', 'getDeviceModel failed', { device, error: (e as Error)?.message });
+    }
     return '';
   }
 
@@ -1987,9 +2007,11 @@ export function createDiskOps(log: LogFunction): DiskOps {
               device,
               size: sizeMatch?.[1]?.trim() || 'Unknown'
             });
-          } catch {}
+          } catch { /* best-effort per-device info */ }
         }
-      } catch {}
+      } catch (e) {
+        log('DEBUG', 'diskOps', 'listUsbDevices: darwin external disk listing failed', { error: (e as Error)?.message });
+      }
     } else if (process.platform === 'linux') {
       try {
         const { stdout } = await runCmd('lsblk -J -o NAME,SIZE,RM,TYPE,MODEL');
@@ -2003,7 +2025,9 @@ export function createDiskOps(log: LogFunction): DiskOps {
             });
           }
         }
-      } catch {}
+      } catch (e) {
+        log('DEBUG', 'diskOps', 'listUsbDevices: linux lsblk failed', { error: (e as Error)?.message });
+      }
     } else if (process.platform === 'win32') {
       const disks = await listWindowsDisks();
       for (const disk of disks) {

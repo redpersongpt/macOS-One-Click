@@ -15,7 +15,9 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
+      # Pin to latest stable — verify at https://github.com/actions/checkout/releases if builds break
       - uses: actions/checkout@v6
+      # Pin to latest stable — verify at https://github.com/actions/setup-node/releases if builds break
       - uses: actions/setup-node@v6
         with:
           node-version: 20
@@ -34,7 +36,9 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     steps:
+      # Pin to latest stable — verify at https://github.com/actions/checkout/releases if builds break
       - uses: actions/checkout@v6
+      # Pin to latest stable — verify at https://github.com/actions/setup-node/releases if builds break
       - uses: actions/setup-node@v6
         with:
           node-version: 20
@@ -46,6 +50,7 @@ jobs:
         run: npm run build
       - name: Package Linux targets
         run: npx electron-builder --linux AppImage deb --x64 --publish never
+      # Pin to latest stable — verify at https://github.com/actions/upload-artifact/releases if builds break
       - uses: actions/upload-artifact@v7
         with:
           name: linux-packages
@@ -53,11 +58,35 @@ jobs:
             release/*.AppImage
             release/*.deb
 
+  build-macos:
+    needs: verify
+    runs-on: macos-latest
+    steps:
+      # Pin to latest stable — verify at https://github.com/actions/checkout/releases if builds break
+      - uses: actions/checkout@v6
+      # Pin to latest stable — verify at https://github.com/actions/setup-node/releases if builds break
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Build application bundles
+        run: npm run build
+      - name: Package macOS
+        run: npx electron-builder --mac dmg --publish never
+      # Pin to latest stable — verify at https://github.com/actions/upload-artifact/releases if builds break
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-installer
+          path: release/*.dmg
+
   build-windows:
     needs: verify
     runs-on: windows-latest
     steps:
+      # Pin to latest stable — verify at https://github.com/actions/checkout/releases if builds break
       - uses: actions/checkout@v6
+      # Pin to latest stable — verify at https://github.com/actions/setup-node/releases if builds break
       - uses: actions/setup-node@v6
         with:
           node-version: 20
@@ -67,18 +96,20 @@ jobs:
         run: npm run build
       - name: Package Windows
         run: npx electron-builder --win nsis --x64 --publish never
+      # Pin to latest stable — verify at https://github.com/actions/upload-artifact/releases if builds break
       - uses: actions/upload-artifact@v7
         with:
           name: windows-installer
           path: release/*.exe
 
   publish-release:
-    needs: [build-linux, build-windows]
-    if: needs.build-linux.result == 'success' && needs.build-windows.result == 'success'
+    needs: [build-linux, build-macos, build-windows]
+    if: needs.build-linux.result == 'success' && needs.build-macos.result == 'success' && needs.build-windows.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      # Pin to latest stable — verify at https://github.com/actions/download-artifact/releases if builds break
       - uses: actions/download-artifact@v8
         with:
           path: release-artifacts
@@ -103,8 +134,9 @@ jobs:
             echo "No release artifacts found."
             exit 1
           fi
-          gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes 2>/dev/null || true
+          # --clobber replaces an existing release atomically (no delete+create race)
           gh release create "$tag" "${files[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --title "$tag" \
-            --latest
+            --latest \
+            --clobber

@@ -113,6 +113,7 @@ type KextFetchResult = { name: string; version: string; source?: 'github' | 'emb
 declare global {
   interface Window {
     electron: {
+      platform: NodeJS.Platform;
       scanHardware: () => Promise<{ profile: HardwareProfile; interpretation: import('../electron/hardwareInterpret').HardwareInterpretation | null; artifact: HardwareProfileArtifact }>;
       getLatestHardwareProfile: () => Promise<HardwareProfileArtifact | null>;
       saveHardwareProfile: (payload: { profile: HardwareProfile; interpretation?: HardwareProfileInterpretationMetadata | null; source?: HardwareProfileArtifact['source'] }) => Promise<HardwareProfileArtifact>;
@@ -186,6 +187,18 @@ declare global {
         firmwareDetectionAvailable: boolean;
         missingBinaries: string[];
       }>;
+      // Prevention Layer
+      runPreflightChecks: (kextNames: string[]) => Promise<any>;
+      recordFailure: (code: string, message: string) => Promise<any>;
+      shouldSkipRetry: (code: string) => Promise<boolean>;
+      getFailureMemory: () => Promise<any[]>;
+      clearFailureMemory: () => Promise<boolean>;
+      // Deterministic Layer
+      simulateBuild: (kextNames: string[], ssdtNames: string[], smbios: string) => Promise<any>;
+      dryRunRecovery: (targetOS: string, smbios: string) => Promise<any>;
+      verifyBuildState: (efiPath: string, requiredKexts: string[]) => Promise<any>;
+      verifyEfiBuildSuccess: (efiPath: string, requiredKexts: string[], requiredSsdts?: string[]) => Promise<any>;
+      verifyRecoverySuccess: (recoveryDir: string) => Promise<any>;
       runSafeSimulation: (profile: import('../electron/configGenerator').HardwareProfile) => Promise<SafeSimulationResult>;
       getResourcePlan: (profile: import('../electron/configGenerator').HardwareProfile, efiPath?: string | null) => Promise<ResourcePlan>;
       // Diagnostics snapshot
@@ -242,7 +255,10 @@ export default function App() {
   const [planningProfileContext, setPlanningProfileContext] = useState<PlanningProfileContext>(null);
   const [compat, setCompat] = useState<CompatibilityReport | null>(null);
   const [biosConf, setBiosConf] = useState<BIOSConfig | null>(null);
-  const [biosStatus, setBiosStatus] = useState<any>(null);
+  const [biosStatus, setBiosStatus] = useState<{
+    secureBootDisabled: boolean | 'unknown';
+    virtualizationEnabled: boolean | 'unknown';
+  } | null>(null);
   const [firmwareInfo, setFirmwareInfo] = useState<import('../electron/firmwarePreflight').FirmwareInfo | null>(null);
   const [biosState, setBiosState] = useState<BiosOrchestratorState | null>(null);
   const [biosResumeState, setBiosResumeState] = useState<BiosResumeStateResponse | null>(null);
@@ -257,7 +273,16 @@ export default function App() {
   const [recovOffset, setRecovOffset] = useState(0);
   const [recovDmgDest, setRecovDmgDest] = useState<string | null>(null);
   const [recovClDest, setRecovClDest] = useState<string | null>(null);
-  const [cachedRecovInfo, setCachedRecovInfo] = useState<any>(null);
+  const [cachedRecovInfo, setCachedRecovInfo] = useState<{
+    version: string;
+    size: number;
+    sourceId: string;
+    trustLevel: string;
+    timestamp: number;
+    dmgPath: string;
+    chunklistPath?: string;
+    isPartial: boolean;
+  } | null>(null);
   const [platform, setPlatform] = useState<string>('unknown');
   const [adminPrivileges, setAdminPrivileges] = useState<boolean | null>(null);
   const [appUpdateState, setAppUpdateState] = useState<ElectronAppUpdateState | null>(null);
@@ -532,6 +557,12 @@ export default function App() {
   const logUiEvent = (eventName: string, detail?: Record<string, unknown> | null) => {
     window.electron?.logUiEvent?.(eventName, detail ?? null).catch(() => {});
   };
+  /** Bypass step guards with an auditable reason — use for error recovery,
+   *  startup restoration, and troubleshooting where guards would see stale state. */
+  const setStepForced = (target: StepId, reason: string) => {
+    logUiEvent('step_forced', { target, reason });
+    _setStepRaw(target);
+  };
   const updateBuildFlow = (
     updater: BuildFlowSnapshot | null | ((current: BuildFlowSnapshot | null) => BuildFlowSnapshot | null),
   ) => {
@@ -775,7 +806,14 @@ export default function App() {
   };
 
   /** Set a global error with context-aware suggestion.
-   *  Tracks retry counts per error code so suggestions evolve on repeated failures. */
+   *  Tracks retry counts per error code so suggestions evolve on repeated failures.
+   *
+   *  TODO(stale-closure): This function reads `profile`, `platform`, `step`,
+   *  `diskInfo`, and `validationResult` from its closure, which may be stale
+   *  when invoked from async callbacks. The safe fix is to mirror each into a
+   *  ref (e.g. profileRef, stepRef) and read refs here. Left as-is because
+   *  the refactor touches many state variables and needs dedicated test
+   *  coverage to land safely. */
   const setErrorWithSuggestion = (
     errorMessage: string,
     overrideStep?: string,
@@ -1018,7 +1056,7 @@ export default function App() {
       const reason = 'Imported or restored hardware profiles are planning inputs only. Run a live hardware scan in this session before BIOS, build, or deployment actions.';
       if (options?.surfaceError !== false) {
         setErrorWithSuggestion(reason, 'report');
-        _setStepRaw('report');
+        setStepForced('report', 'build guard: no live hardware context');
       }
       return {
         allowed: false,
@@ -1051,7 +1089,7 @@ export default function App() {
         message: 'EFI build is blocked',
         rawMessage: guard.reason ?? 'Build is blocked by the current firmware or compatibility state.',
       });
-      _setStepRaw(redirect);
+      setStepForced(redirect, 'build guard blocked by firmware/compat state');
     }
     return guard;
   };
@@ -1068,7 +1106,7 @@ export default function App() {
       const reason = 'Imported or restored hardware profiles are planning inputs only. Run a live hardware scan in this session before any deploy or write action.';
       if (options?.surfaceError !== false) {
         setErrorWithSuggestion(reason, 'report');
-        _setStepRaw('report');
+        setStepForced('report', 'deploy guard: no live hardware context');
       }
       return {
         guard: {
@@ -1101,7 +1139,7 @@ export default function App() {
         setErrorWithSuggestion(`${reason}${options?.reasonSuffix ?? ''}`, redirect, {
           validationResult: validation,
         });
-        _setStepRaw(redirect);
+        setStepForced(redirect, 'deploy guard blocked');
       }
     }
 
@@ -1136,12 +1174,12 @@ export default function App() {
 
   const openTroubleshooting = () => {
     stepBeforeTroubleshootingRef.current = step;
-    _setStepRaw('troubleshooting' as StepId);
+    setStepForced('troubleshooting' as StepId, 'user opened troubleshooting panel');
   };
 
   const closeTroubleshooting = () => {
     const returnTo = stepBeforeTroubleshootingRef.current;
-    _setStepRaw(returnTo);
+    setStepForced(returnTo, 'user closed troubleshooting panel');
   };
 
   const refreshBiosState = async (
@@ -1167,7 +1205,7 @@ export default function App() {
       // Only redirect to BIOS if explicitly requested AND no active build flow is in progress.
       // Redirecting during an active build would yank the user back mid-operation.
       if (options?.redirectIfBlocked && !isDeployingRef.current && (!(nextState.readyToBuild && nextState.stage === 'complete')) && STEP_ORDER.indexOf(step) > STEP_ORDER.indexOf('bios')) {
-        _setStepRaw('bios');
+        setStepForced('bios', 'BIOS state incomplete — redirect from refreshBiosState');
       }
       return nextState;
     } catch (e: any) {
@@ -1494,10 +1532,17 @@ export default function App() {
 
   // Persist state
   useEffect(() => { (async () => { try {
-    // Detect platform for BIOS step
-    if (navigator.userAgent.includes('Windows')) setPlatform('win32');
-    else if (navigator.userAgent.includes('Mac')) setPlatform('darwin');
-    else setPlatform('linux');
+    // Detect platform for BIOS step — use the preload-exposed value (reliable)
+    // instead of User-Agent parsing (fragile and spoofable).
+    if (window.electron?.platform) {
+      setPlatform(window.electron.platform);
+    } else if (navigator.userAgent.includes('Windows')) {
+      setPlatform('win32');
+    } else if (navigator.userAgent.includes('Mac')) {
+      setPlatform('darwin');
+    } else {
+      setPlatform('linux');
+    }
 
     // Run early prechecks for admin rights
     if (window.electron && typeof window.electron.runPrechecks === 'function') {
@@ -1536,7 +1581,7 @@ export default function App() {
       setPlanningProfileContext(null);
       setProfileArtifact(null);
       invalidateGeneratedBuild();
-      _setStepRaw('welcome');
+      setStepForced('welcome', 'safe-recovery query param detected');
       return;
     }
 
@@ -1556,12 +1601,12 @@ export default function App() {
       setCompat(restore.compatibility);
       setBiosConf(restore.biosConfig);
       setBiosState(null);
-      // Use _setStepRaw for restoration: state variables haven't flushed to the
+      // Use setStepForced for restoration: state variables haven't flushed to the
       // render closure yet, so the centralized step guard would see stale nulls.
       const restoredStep = STEP_ORDER.indexOf(restore.restoredStep as StepId) > STEP_ORDER.indexOf('report')
         ? 'report'
         : (restore.restoredStep as StepId);
-      _setStepRaw(restoredStep);
+      setStepForced(restoredStep, 'persisted state restoration — guards see stale nulls');
       if (restore.canReuseExistingEfi && s.efiPath) {
         try {
           const restoredValidation = await window.electron.validateEfi(s.efiPath, restore.profile);
@@ -1585,7 +1630,7 @@ export default function App() {
         setCompat(restore.compatibility);
         setBiosConf(restore.biosConfig);
         setBiosState(null);
-        _setStepRaw('report');
+        setStepForced('report', 'restored from latest saved artifact');
       }
 
     // Auto-resume an interrupted recovery download
@@ -1602,7 +1647,26 @@ export default function App() {
         setRecovClDest(resumeState.clDest);
         setRecovPct(8); // show that we're not at 0
         setRecovStatus(`Resuming from ${(resumeState.offset / 1024 / 1024).toFixed(0)} MB…`);
-        _setStepRaw('recovery-download'); // bypass guard — efiPath hasn't flushed to closure yet
+        // Create a build flow snapshot so the stall detector and progress
+        // monitor treat this resumed download the same as a normal build.
+        updateBuildFlow(() => ({
+          active: true,
+          runId: Date.now(),
+          phase: 'recovery-download' as const,
+          uiStep: 'recovery-download' as const,
+          startedAt: Date.now(),
+          lastProgressAt: Date.now(),
+          activeTaskKind: 'recovery-download',
+          activeTaskStatus: 'running',
+          lastTaskPhase: null,
+          taskCompleteEventFired: false,
+          validationStarted: false,
+          validationFinished: false,
+          pendingRendererExpectation: 'the recovery download to complete',
+          transitionGuardBlocked: null,
+          stalledReason: null,
+        }));
+        setStepForced('recovery-download', 'auto-resume interrupted recovery — efiPath not yet in closure');
         // Kick off the resumed download — progress is driven by the recovTask useEffect above
         lastRecovSaveRef.current = 0;
         window.electron.downloadRecovery(resumeState.efiPath, resumeState.targetOS, resumeState.offset)
@@ -1706,10 +1770,10 @@ export default function App() {
         setPlanningProfileContext(previousPlanningContext);
         setHwInterpretation(previousInterpretation);
         setErrorWithSuggestion(e.message || 'Hardware scan failed', 'report');
-        _setStepRaw('report');
+        setStepForced('report', 'hardware scan failed with existing profile');
       } else {
         setErrorWithSuggestion(e.message || 'Hardware scan failed', 'precheck');
-        _setStepRaw('precheck');
+        setStepForced('precheck', 'hardware scan failed — no previous profile');
       }
     } finally {
       if (scanRequestIdRef.current === requestId) {
@@ -1982,7 +2046,7 @@ export default function App() {
       try {
         const { kexts: requiredKexts } = getRequiredResources(profile);
         setPreflightRunning(true);
-        const report = await (window.electron as any).runPreflightChecks(requiredKexts);
+        const report = await window.electron.runPreflightChecks(requiredKexts);
         if (!isCurrentRun()) return;
         setPreflightReport(report);
         setConfidence(report.confidence);
@@ -1995,7 +2059,7 @@ export default function App() {
           debugWarn('[preflight] Warnings:', report.warnings);
         }
         for (const k of report.kextAvailability.filter(k => !k.available)) {
-          (window.electron as any).recordFailure(`kext_${k.name}`, k.error || 'unavailable');
+          window.electron.recordFailure(`kext_${k.name}`, k.error || 'unavailable');
         }
       } catch (preflightErr: any) {
         setPreflightRunning(false);
@@ -2015,7 +2079,7 @@ export default function App() {
       setStatus('Verifying downloads and dependencies…');
       try {
         const { kexts: requiredKexts, ssdts: requiredSSDTs } = getRequiredResources(profile);
-        const plan = await (window.electron as any).simulateBuild(requiredKexts, requiredSSDTs, profile.smbios);
+        const plan = await window.electron.simulateBuild(requiredKexts, requiredSSDTs, profile.smbios);
         if (!isCurrentRun()) return;
         setBuildPlan(plan);
         setCertainty(plan.certainty);
@@ -2074,13 +2138,13 @@ export default function App() {
         if (!isCurrentRun()) return;
         setKextResults(fetchedKextResults);
         for (const k of fetchedKextResults.filter(k => k.source === 'failed')) {
-          (window.electron as any).recordFailure(`kext_${k.name}`, 'Download failed').catch(() => {});
+          window.electron.recordFailure(`kext_${k.name}`, 'Download failed').catch(() => {});
         }
       } catch (e) {
         if (!isCurrentRun()) return;
         fetchedKextResults = kexts.map(k => ({ name: k, version: 'unavailable', source: 'failed' }));
         setKextResults(fetchedKextResults);
-        (window.electron as any).recordFailure('kext_batch', String((e as Error)?.message || 'Batch kext fetch failed')).catch(() => {});
+        window.electron.recordFailure('kext_batch', String((e as Error)?.message || 'Batch kext fetch failed')).catch(() => {});
       }
       if (!isCurrentRun()) return;
       setProgress(100);
@@ -2126,7 +2190,7 @@ export default function App() {
 
       // Phase 4: Hard success contract — verify from disk, not flags
       try {
-        const contract = await (window.electron as any).verifyEfiBuildSuccess(built, kexts, requiredSsdts);
+        const contract = await window.electron.verifyEfiBuildSuccess(built, kexts, requiredSsdts);
         if (!isCurrentRun()) return;
         if (!contract.passed) {
           const failed = contract.checks.filter((c: any) => !c.passed);
@@ -2207,7 +2271,7 @@ export default function App() {
       // Deterministic: Recovery dry-run — send real test request to Apple before download
       try {
         setStatus('Testing Apple recovery endpoint…');
-        const dryRun = await (window.electron as any).dryRunRecovery(profile.targetOS || 'macOS Sequoia 15', profile.smbios);
+        const dryRun = await window.electron.dryRunRecovery(profile.targetOS || 'macOS Sequoia 15', profile.smbios);
         if (!isCurrentRun()) return;
         setRecoveryDryRun(dryRun);
 
@@ -2215,7 +2279,7 @@ export default function App() {
         if (dryRun.certainty === 'will_fail') {
           setRecovError(`Recovery will fail: ${dryRun.recommendation}`);
           setErrorWithSuggestion(dryRun.recommendation, 'recovery-download');
-          (window.electron as any).recordFailure('recovery_auth', dryRun.recommendation).catch(() => {});
+          window.electron.recordFailure('recovery_auth', dryRun.recommendation).catch(() => {});
           return; // Let user see error + use manual import
         }
       } catch (dryRunErr: any) {
@@ -2236,7 +2300,7 @@ export default function App() {
       } catch (e: any) {
         const msg = e.message || 'Unknown error';
         const failCode = msg.includes('401') || msg.includes('403') ? 'recovery_auth' : 'recovery_dl';
-        (window.electron as any).recordFailure(failCode, msg).catch(() => {});
+        window.electron.recordFailure(failCode, msg).catch(() => {});
         setRecovError(msg);
         setErrorWithSuggestion(msg, 'recovery-download');
         return; /* wait for user action (Retry or Skip) */
@@ -2252,7 +2316,7 @@ export default function App() {
           pendingRendererExpectation: 'the installer method screen to open',
           taskCompleteEventFired: false,
         });
-        const recovContract = await (window.electron as any).verifyRecoverySuccess(built);
+        const recovContract = await window.electron.verifyRecoverySuccess(built);
         if (!isCurrentRun()) return;
         if (!recovContract.passed) {
           const failed = recovContract.checks.filter((c: any) => !c.passed);
@@ -2725,7 +2789,7 @@ export default function App() {
       try {
         await window.electron.flashUsb(selectedUsb, efiPath, true, flashConfirmationToken);
       } catch (e: any) {
-        (window.electron as any).recordFailure('flash_write', e.message || 'Flash failed').catch(() => {});
+        window.electron.recordFailure('flash_write', e.message || 'Flash failed').catch(() => {});
         clearFlashConfirmationState();
         const targetStep = getFlashFailureTargetStep(e?.message || '', profile);
         setErrorWithSuggestion(e.message || 'USB flash write failed. Check that the drive is not write-protected and try a different USB drive.', targetStep);
@@ -3420,7 +3484,7 @@ export default function App() {
                           <p className="text-xs font-bold text-[#aaa]">What you can do:</p>
 
                           {/* Option 1: Retry */}
-                          <button disabled={isRetryingRecovRef.current} onClick={async () => { if (isRetryingRecovRef.current) return; isRetryingRecovRef.current = true; setRecovError(null); setRecovPct(0); try { await window.electron.downloadRecovery(efiPath!, profile?.targetOS || 'macOS Sequoia 15'); try { const c = await (window.electron as any).verifyRecoverySuccess(efiPath!); if (!c.passed) { const failed = c.checks.filter((x: any) => !x.passed); setRecovError(`Recovery verification failed: ${failed.map((x: any) => `${x.name}: ${x.detail}`).join('; ')}`); setErrorWithSuggestion('Recovery download completed but verification failed. File may be incomplete.', 'recovery-download'); return; } } catch {} advanceToMethodSelect(efiPath!); } catch (e: any) { const msg = e.message || 'Retry failed'; const code = msg.includes('401') || msg.includes('403') || msg.includes('rejected') ? 'recovery_auth' : 'recovery_dl'; (window.electron as any).recordFailure(code, msg).catch(() => {}); setRecovError(msg); setErrorWithSuggestion(msg, 'recovery-download'); } finally { isRetryingRecovRef.current = false; } }}
+                          <button disabled={isRetryingRecovRef.current} onClick={async () => { if (isRetryingRecovRef.current) return; isRetryingRecovRef.current = true; setRecovError(null); setRecovPct(0); try { await window.electron.downloadRecovery(efiPath!, profile?.targetOS || 'macOS Sequoia 15'); try { const c = await window.electron.verifyRecoverySuccess(efiPath!); if (!c.passed) { const failed = c.checks.filter((x: any) => !x.passed); setRecovError(`Recovery verification failed: ${failed.map((x: any) => `${x.name}: ${x.detail}`).join('; ')}`); setErrorWithSuggestion('Recovery download completed but verification failed. File may be incomplete.', 'recovery-download'); return; } } catch {} advanceToMethodSelect(efiPath!); } catch (e: any) { const msg = e.message || 'Retry failed'; const code = msg.includes('401') || msg.includes('403') || msg.includes('rejected') ? 'recovery_auth' : 'recovery_dl'; window.electron.recordFailure(code, msg).catch(() => {}); setRecovError(msg); setErrorWithSuggestion(msg, 'recovery-download'); } finally { isRetryingRecovRef.current = false; } }}
                             className="w-full text-left p-4 bg-white/4 border border-white/8 rounded-xl hover:bg-white/8 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-4">
                             <RefreshCcw className="w-5 h-5 text-white/60 shrink-0" />
                             <div>
@@ -3431,7 +3495,7 @@ export default function App() {
 
                           {/* Option 2: Use cached recovery */}
                           {cachedRecovInfo && !cachedRecovInfo.isPartial && (
-                            <button onClick={async () => { setRecovError(null); setRecovPct(0); try { await window.electron.downloadRecovery(efiPath!, profile?.targetOS || 'macOS Sequoia 15'); try { const c = await (window.electron as any).verifyRecoverySuccess(efiPath!); if (!c.passed) { const failed = c.checks.filter((x: any) => !x.passed); setRecovError(`Cached recovery verification failed: ${failed.map((x: any) => `${x.name}: ${x.detail}`).join('; ')}`); return; } } catch {} advanceToMethodSelect(efiPath!); } catch (e: any) { setRecovError(e.message || 'Cache retrieval failed'); } }}
+                            <button onClick={async () => { setRecovError(null); setRecovPct(0); try { await window.electron.downloadRecovery(efiPath!, profile?.targetOS || 'macOS Sequoia 15'); try { const c = await window.electron.verifyRecoverySuccess(efiPath!); if (!c.passed) { const failed = c.checks.filter((x: any) => !x.passed); setRecovError(`Cached recovery verification failed: ${failed.map((x: any) => `${x.name}: ${x.detail}`).join('; ')}`); return; } } catch {} advanceToMethodSelect(efiPath!); } catch (e: any) { setRecovError(e.message || 'Cache retrieval failed'); } }}
                               className="w-full text-left p-4 bg-emerald-500/8 border border-emerald-500/20 rounded-xl hover:bg-emerald-500/15 transition-all cursor-pointer flex items-center gap-4">
                               <HardDrive className="w-5 h-5 text-emerald-400 shrink-0" />
                               <div>

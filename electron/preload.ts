@@ -36,6 +36,9 @@ try {
 // ── contextBridge ─────────────────────────────────────────────────────────────
 try {
   contextBridge.exposeInMainWorld('electron', {
+    // Platform identity
+    platform: process.platform,
+
     // Hardware scan
     scanHardware: () => ipcRenderer.invoke('scan-hardware'),
     getLatestHardwareProfile: () => ipcRenderer.invoke('hardware-profile:get-latest'),
@@ -65,8 +68,11 @@ try {
     listUsbDevices: () => ipcRenderer.invoke('list-usb-devices'),
     prepareFlashConfirmation: (device: string, efiPath: string, expectedIdentity?: { devicePath?: string; sizeBytes?: number; model?: string; vendor?: string; serialNumber?: string; transport?: string; removable?: boolean; partitionTable?: string }) =>
       ipcRenderer.invoke('flash:prepare-confirmation', device, efiPath, expectedIdentity),
-    flashUsb: (device: string, efiPath: string, confirmed: boolean, confirmationToken?: string | null) =>
-      ipcRenderer.invoke('flash-usb', device, efiPath, confirmed, confirmationToken ?? null),
+    flashUsb: (device: string, efiPath: string, confirmed: boolean, confirmationToken?: string | null) => {
+      if (typeof device !== 'string' || typeof efiPath !== 'string') throw new TypeError('flashUsb: device and efiPath must be strings');
+      if (typeof confirmed !== 'boolean') throw new TypeError('flashUsb: confirmed must be a boolean');
+      return ipcRenderer.invoke('flash-usb', device, efiPath, confirmed, confirmationToken ?? null);
+    },
 
     // EFI validation
     validateEfi: (efiPath: string, profile?: object | null) => ipcRenderer.invoke('validate-efi', efiPath, profile ?? null),
@@ -93,7 +99,10 @@ try {
     guardDeploy: (profile: object, efiPath: string) => ipcRenderer.invoke('flow:guard-deploy', profile, efiPath),
 
     // File system / diagnostics
-    openFolder: (folderPath: string) => ipcRenderer.invoke('open-folder', folderPath),
+    openFolder: (folderPath: string) => {
+      if (typeof folderPath !== 'string') throw new TypeError('openFolder: folderPath must be a string');
+      return ipcRenderer.invoke('open-folder', folderPath);
+    },
     getLogPath: (): Promise<string> => ipcRenderer.invoke('get-log-path'),
 
     // State Persistence
@@ -108,8 +117,17 @@ try {
     restartToBios: () => ipcRenderer.invoke('restart-to-bios'),
     disableAutostart: () => ipcRenderer.invoke('disable-autostart'),
     getHardDrives: () => ipcRenderer.invoke('get-hard-drives'),
-    convertDiskToGpt: (disk: string, confirmed: boolean) => ipcRenderer.invoke('convert-disk-to-gpt', disk, confirmed),
-    shrinkPartition: (disk: string, sizeGB: number, confirmed: boolean) => ipcRenderer.invoke('shrink-partition', disk, sizeGB, confirmed),
+    convertDiskToGpt: (disk: string, confirmed: boolean) => {
+      if (typeof disk !== 'string') throw new TypeError('convertDiskToGpt: disk must be a string');
+      if (typeof confirmed !== 'boolean') throw new TypeError('convertDiskToGpt: confirmed must be a boolean');
+      return ipcRenderer.invoke('convert-disk-to-gpt', disk, confirmed);
+    },
+    shrinkPartition: (disk: string, sizeGB: number, confirmed: boolean) => {
+      if (typeof disk !== 'string') throw new TypeError('shrinkPartition: disk must be a string');
+      if (typeof sizeGB !== 'number') throw new TypeError('shrinkPartition: sizeGB must be a number');
+      if (typeof confirmed !== 'boolean') throw new TypeError('shrinkPartition: confirmed must be a boolean');
+      return ipcRenderer.invoke('shrink-partition', disk, sizeGB, confirmed);
+    },
     createBootPartition: (disk: string, efiPath: string, confirmed: boolean, profile?: object | null) => ipcRenderer.invoke('create-boot-partition', disk, efiPath, confirmed, profile ?? null),
     getDownloadResumeState: () => ipcRenderer.invoke('get-download-resume-state'),
 
