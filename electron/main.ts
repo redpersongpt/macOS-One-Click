@@ -3429,6 +3429,21 @@ app.whenReady().then(async () => {
     );
   });
 
+  // Kexts that are non-fatal when download fails — the system boots without them.
+  // These get removed from config.plist instead of blocking the entire EFI build.
+  // Wi-Fi and Bluetooth kexts are optional: the user can install them later after
+  // getting macOS running. Ethernet kexts without embedded fallbacks are also optional.
+  const OPTIONAL_KEXTS = new Set([
+    'itlwm.kext',              // Intel Wi-Fi (needs HeliPort companion app anyway)
+    'AirportItlwm.kext',       // Intel Wi-Fi (native AirPort, needs SecureBootModel)
+    'IntelBluetoothFirmware.kext', // Intel Bluetooth firmware
+    'BlueToolFixup.kext',      // Bluetooth fix for Monterey+
+    'BrcmPatchRAM3.kext',      // Broadcom Bluetooth
+    'AirportBrcmFixup.kext',   // Broadcom Wi-Fi
+    'VoodooI2C.kext',          // I2C trackpad (PS2 fallback still works)
+    'VoodooI2CHID.kext',       // I2C HID satellite
+  ]);
+
   // Kext fetcher — primary network source (GitHub release or direct asset) → embedded fallback → hard fail
   ipcHandle('fetch-latest-kexts', async (_event: Electron.IpcMainInvokeEvent, efiPath: string, kextNames: string[]) => {
     const kextsDir = path.resolve(efiPath, 'EFI/OC/Kexts');
@@ -3527,20 +3542,45 @@ app.whenReady().then(async () => {
           index: results.length, total: kextNames.length, source,
         });
       }
-      // Fail-fast: if any kexts failed, throw an explicit error before validation
-      // so the user sees "kext unavailable" instead of a late "bundle incomplete" surprise.
-      if (failedKexts.length > 0) {
-        const summary = failedKexts
+      // Separate required failures (block build) from optional failures (warn but continue).
+      const requiredFailures = failedKexts.filter(fk => !OPTIONAL_KEXTS.has(fk.name));
+      const optionalFailures = failedKexts.filter(fk => OPTIONAL_KEXTS.has(fk.name));
+
+      // Remove optional failed kexts from config.plist so validation doesn't block on them
+      if (optionalFailures.length > 0) {
+        const configPath = path.resolve(efiPath, 'EFI/OC/config.plist');
+        if (fs.existsSync(configPath)) {
+          let configContent = fs.readFileSync(configPath, 'utf-8');
+          for (const fk of optionalFailures) {
+            // Remove the entire <dict>...</dict> block for this kext from Kernel/Add
+            const bundlePath = fk.name.endsWith('.kext') ? fk.name : `${fk.name}.kext`;
+            const escapedName = bundlePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const kextBlockPattern = new RegExp(
+              `\\s*<dict>[\\s\\S]*?<string>${escapedName}</string>[\\s\\S]*?</dict>`,
+              'g'
+            );
+            configContent = configContent.replace(kextBlockPattern, '');
+            log('WARN', 'kext', `Removed optional kext ${fk.name} from config.plist (download failed, non-fatal)`, {
+              kext: fk.name, repo: fk.repo, error: fk.error,
+            });
+          }
+          fs.writeFileSync(configPath, configContent);
+        }
+      }
+
+      // Fail-fast only on REQUIRED kext failures
+      if (requiredFailures.length > 0) {
+        const summary = requiredFailures
           .map(fk => `${fk.name} (${fk.repo}): ${fk.error}`)
           .join('; ');
         const errorMessage =
-          failedKexts.length === 1
-            ? `Required kext unavailable: ${failedKexts[0].name} — ${failedKexts[0].error}. ` +
-              `No embedded fallback exists for ${failedKexts[0].name}. ` +
+          requiredFailures.length === 1
+            ? `Required kext unavailable: ${requiredFailures[0].name} — ${requiredFailures[0].error}. ` +
+              `No embedded fallback exists for ${requiredFailures[0].name}. ` +
               'Internet access required to download this kext from GitHub.'
-            : `${failedKexts.length} required kexts unavailable: ${summary}. ` +
+            : `${requiredFailures.length} required kexts unavailable: ${summary}. ` +
               'Internet access is required for kexts that have no embedded fallback.';
-        log('ERROR', 'kext', 'Kext fetch completed with hard failures', { failedKexts });
+        log('ERROR', 'kext', 'Kext fetch completed with hard failures', { requiredFailures, optionalFailures });
         registry.fail(token.taskId, errorMessage);
         throw new Error(errorMessage);
       }
