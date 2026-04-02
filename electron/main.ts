@@ -1523,9 +1523,38 @@ async function createEfiStructure(
       });
     }
   }
-  if (missingSsdts.length > 0) {
+  // SSDT-GPIO is optional: it's only needed for VoodooI2C (I2C trackpad path).
+  // If it can't be sourced, remove it from config.plist and fall back to PS2.
+  const OPTIONAL_SSDTS = new Set(['SSDT-GPIO.aml']);
+  const requiredMissing = missingSsdts.filter(s => !OPTIONAL_SSDTS.has(s));
+  const optionalMissing = missingSsdts.filter(s => OPTIONAL_SSDTS.has(s));
+
+  if (optionalMissing.length > 0) {
+    const configPath = path.resolve(basePath, 'EFI/OC/config.plist');
+    if (fs.existsSync(configPath)) {
+      let configContent = fs.readFileSync(configPath, 'utf-8');
+      for (const ssdt of optionalMissing) {
+        const escaped = ssdt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const ssdtBlock = new RegExp(`\\s*<dict>[\\s\\S]*?<string>${escaped}</string>[\\s\\S]*?</dict>`, 'g');
+        configContent = configContent.replace(ssdtBlock, '');
+        log('WARN', 'efi', `Removed optional SSDT ${ssdt} from config.plist (download failed, falling back to PS2 path)`, { ssdt });
+      }
+      // Also remove VoodooI2C kexts if SSDT-GPIO was dropped (they need GPIO to work)
+      if (optionalMissing.includes('SSDT-GPIO.aml')) {
+        for (const kext of ['VoodooI2C.kext', 'VoodooI2CHID.kext', 'VoodooI2C.kext/Contents/PlugIns/VoodooI2CHID.kext']) {
+          const escapedKext = kext.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const kextBlock = new RegExp(`\\s*<dict>[\\s\\S]*?<string>${escapedKext}</string>[\\s\\S]*?</dict>`, 'g');
+          configContent = configContent.replace(kextBlock, '');
+        }
+        log('WARN', 'efi', 'Removed VoodooI2C kexts from config.plist (SSDT-GPIO unavailable, falling back to PS2)', {});
+      }
+      fs.writeFileSync(configPath, configContent);
+    }
+  }
+
+  if (requiredMissing.length > 0) {
     throw new Error(
-      `EFI build failed: required SSDT files could not be sourced for this hardware profile: ${missingSsdts.join(', ')}. ` +
+      `EFI build failed: required SSDT files could not be sourced for this hardware profile: ${requiredMissing.join(', ')}. ` +
       'The OpenCore cache or supplemental ACPI cache may be incomplete — rebuild after clearing OpenCore_Cache.'
     );
   }
@@ -3008,6 +3037,19 @@ app.whenReady().then(async () => {
       try { require('child_process').execSync('echo automount enable | diskpart', { timeout: 5000 }); } catch {}
     }
   });
+  // Clear stale OpenCore cache on startup — prevents corrupted/partial downloads from
+  // blocking subsequent builds. Supplemental ACPI files and extracted kext archives
+  // are re-downloaded as needed. (#51)
+  const openCoreCachePath = path.resolve(app.getPath('userData'), 'OpenCore_Cache');
+  if (fs.existsSync(openCoreCachePath)) {
+    try {
+      fs.rmSync(openCoreCachePath, { recursive: true, force: true });
+      log('INFO', 'startup', 'Cleared OpenCore_Cache on startup');
+    } catch (e: any) {
+      log('WARN', 'startup', 'Failed to clear OpenCore_Cache', { error: e?.message });
+    }
+  }
+
   hardwareProfileStore = createHardwareProfileStore(app.getPath('userData'));
   const latestHardwareArtifact = hardwareProfileStore.loadLatest();
   if (latestHardwareArtifact && canRestoreLatestScannedArtifact(latestHardwareArtifact)) {
