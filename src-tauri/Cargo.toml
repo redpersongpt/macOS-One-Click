@@ -1,6 +1,6 @@
 [package]
 name = "opcore-oneclick"
-version = "4.0.0"
+version = "5.0.0"
 description = "Hackintosh EFI generator — build OpenCore configurations from detected hardware"
 authors = ["redpersongpt"]
 license = "MIT"

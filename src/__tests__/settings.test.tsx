@@ -32,7 +32,7 @@ vi.stubGlobal('fetch', mockFetch);
 
 describe('Settings', () => {
   beforeEach(() => {
-    vi.mocked(getVersion).mockResolvedValue('4.0.0');
+    vi.mocked(getVersion).mockResolvedValue('5.0.0');
     vi.mocked(save).mockResolvedValue(null);
     vi.mocked(api.logGetSessionId).mockResolvedValue('session-123');
     vi.mocked(api.logGetTail).mockResolvedValue('line one\nline two');
@@ -42,8 +42,8 @@ describe('Settings', () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        tag_name: 'v4.0.0',
-        html_url: 'https://github.com/redpersongpt/OpCore-OneClick/releases/tag/v4.0.0',
+        tag_name: 'v5.0.0',
+        html_url: 'https://github.com/redpersongpt/OpCore-OneClick/releases/tag/v5.0.0',
         body: 'Release notes',
         published_at: '2026-01-01T00:00:00Z',
       }),
@@ -57,7 +57,7 @@ describe('Settings', () => {
     await waitFor(() => {
       expect(screen.getByText((content) => content.includes('line one') && content.includes('line two'))).toBeInTheDocument();
     });
-    expect(screen.getByText('v4.0.0')).toBeInTheDocument();
+    expect(screen.getByText('v5.0.0')).toBeInTheDocument();
     expect(api.logGetTail).toHaveBeenCalledWith(200);
   });
 

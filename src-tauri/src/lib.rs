@@ -41,7 +41,7 @@ pub fn run() {
             let flash_security = FlashSecurityContext::new(session_id);
             app.manage(flash_security);
 
-            log::info!("OpCore-OneClick v4.0.0 initialized");
+            log::info!("OpCore-OneClick v5.0.0 initialized");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

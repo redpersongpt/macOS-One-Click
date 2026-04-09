@@ -31,7 +31,7 @@ interface UpdateInfo {
 }
 
 export default function Settings({ open, onClose, onOpenTroubleshoot }: SettingsProps) {
-  const [appVersion, setAppVersion] = useState('4.0.0');
+  const [appVersion, setAppVersion] = useState('5.0.0');
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [logTail, setLogTail] = useState('');
   const [loadingLog, setLoadingLog] = useState(false);

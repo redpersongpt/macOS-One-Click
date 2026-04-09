@@ -82,7 +82,7 @@ export default function Sidebar({ onOpenSettings }: SidebarProps) {
           >
             <Settings2 size={13} />
           </button>
-          <span className="text-[9px] text-[#2a2a30] tracking-wide">v4.0.0</span>
+          <span className="text-[9px] text-[#2a2a30] tracking-wide">v5.0.0</span>
         </div>
       </div>
     </aside>
