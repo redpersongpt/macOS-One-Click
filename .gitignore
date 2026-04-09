@@ -2,6 +2,7 @@ node_modules/
 build/
 dist/
 dist-electron/
+src-tauri/target/
 coverage/
 .DS_Store
 *.log

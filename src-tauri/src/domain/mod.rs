@@ -1,0 +1,12 @@
+pub mod amd_patches;
+pub mod compatibility;
+pub mod config_generator;
+pub mod config_validator;
+pub mod form_factor;
+pub mod hardware_detect;
+pub mod hardware_interpret;
+pub mod hardware_mapper;
+pub mod kext_policy;
+pub mod rules;
+pub mod ssdt_policy;
+pub mod wifi_policy;

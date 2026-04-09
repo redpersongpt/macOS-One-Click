@@ -23,5 +23,5 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "exclude": ["dist-electron", "dist", "node_modules"]
+  "exclude": ["dist-electron", "dist", "node_modules", "electron", "src-tauri", "test"]
 }

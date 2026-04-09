@@ -83,7 +83,7 @@ Project note: the app is now branded as `OpCore-OneClick`. Legacy repo/update co
 ## 2.7.10 - 2026-03-23
 
 ### EFI Generation fixes for Coffee Lake, Z390, and Tahoe
-- SIP disabled (csr-active-config /w8AAA==) per Dortania spec for Coffee Lake and newer.
+- SIP disabled (csr-active-config /w8AAA==) for the Coffee Lake and newer path used at the time.
 - Dual-boot safety: Set UpdateSMBIOSMode to 'Custom' to prevent SMBIOS leaking into Windows.
 - Intel NIC stability: Added dk.e1000=0 boot-arg for I219/I225 controllers.
 - RTC stability: DisableRtcChecksum=true for Z390/Z370 boards (Fixes BIOS resets).

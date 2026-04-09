@@ -1,100 +1,43 @@
 {
   "name": "opcore-oneclick",
   "private": true,
-  "version": "3.2.8",
-  "description": "OpCore-OneClick deployment utility",
-  "author": "OpCore-OneClick contributors",
-  "main": "dist-electron/electron/main.js",
-  "bin": {
-    "opcore-oneclick": "dist-electron/electron/cli.js",
-    "macos-oneclick": "dist-electron/electron/cli.js"
-  },
+  "version": "4.0.0",
+  "description": "Hackintosh EFI generator — build OpenCore configurations from detected hardware",
+  "author": "redpersongpt",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && tsc -p electron/tsconfig.json && vite build",
-    "cli": "tsc -p electron/tsconfig.json && node dist-electron/electron/cli.js",
-    "package:linux": "npm run build && electron-builder --linux AppImage deb --publish never",
-    "package:win": "npm run build && electron-builder --win nsis --publish never",
-    "package:release": "npm run build && electron-builder --linux AppImage deb --win nsis --publish never",
+    "build:frontend": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build",
+    "tauri:dev": "npx tauri dev",
+    "tauri:build": "npx tauri build",
     "preview": "vite preview",
-    "clean": "rm -rf dist dist-electron",
+    "clean": "rm -rf dist src-tauri/target",
     "lint": "tsc --noEmit",
-    "electron:dev": "tsc -p electron/tsconfig.json && concurrently -k \"cross-env BROWSER=none npm run dev\" \"tsc -p electron/tsconfig.json -w --preserveWatchOutput\" \"wait-on http://localhost:5173 && electron .\"",
     "test": "vitest run"
-  },
-  "build": {
-    "appId": "com.redpersongpt.macosoneclick",
-    "productName": "OpCore-OneClick",
-    "directories": {
-      "output": "release"
-    },
-    "files": [
-      "dist/**/*",
-      "dist-electron/**/*",
-      "assets/**/*"
-    ],
-    "extraResources": [
-      {
-        "from": "electron/assets/kexts",
-        "to": "kexts",
-        "filter": [
-          "**/*"
-        ]
-      }
-    ],
-    "mac": {
-      "target": "dmg",
-      "icon": "assets/icons/icon.icns",
-      "signIgnore": [
-        "kexts/.*"
-      ]
-    },
-    "win": {
-      "target": "nsis",
-      "icon": "assets/icons/image.png",
-      "requestedExecutionLevel": "requireAdministrator"
-    },
-    "linux": {
-      "target": [
-        "AppImage",
-        "deb"
-      ],
-      "icon": "assets/icons/image.png",
-      "category": "System",
-      "maintainer": "OpCore-OneClick contributors",
-      "vendor": "redpersongpt",
-      "executableArgs": []
-    },
-    "deb": {
-      "depends": [
-        "libnss3",
-        "libatk1.0-0",
-        "libatk-bridge2.0-0",
-        "libcups2",
-        "libgtk-3-0",
-        "libasound2"
-      ]
-    }
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",
+    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/plugin-dialog": "^2.7.0",
+    "@tauri-apps/plugin-fs": "^2.5.0",
+    "@tauri-apps/plugin-shell": "^2.3.5",
     "@vitejs/plugin-react": "^5.0.4",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "zustand": "^5.0.12"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.10.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@types/node": "^22.14.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "autoprefixer": "^10.4.21",
-    "concurrently": "^9.2.1",
-    "cross-env": "^10.1.0",
-    "electron": "^41.0.2",
-    "electron-builder": "^26.8.1",
     "jsdom": "^29.0.1",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",

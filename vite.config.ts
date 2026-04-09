@@ -5,7 +5,7 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
-    base: './', // Crucial for Electron
+    base: './',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
@@ -13,9 +13,11 @@ export default defineConfig(() => {
       },
     },
     server: {
-      // HMR can be disabled in constrained environments via DISABLE_HMR.
+      port: 5173,
+      strictPort: true,
       hmr: process.env.DISABLE_HMR !== 'true',
     },
+    clearScreen: false,
     build: {
       outDir: 'dist',
       assetsDir: '.',

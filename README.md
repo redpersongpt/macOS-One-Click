@@ -54,7 +54,7 @@ OpCore-OneClick, formerly macOS One-Click, scans the target machine, validates t
 
 ## Acknowledgements
 
-Built on the work of [Acidanthera](https://github.com/acidanthera) and [Dortania](https://dortania.github.io/OpenCore-Install-Guide/).
+Built on the work of [Acidanthera](https://github.com/acidanthera) and the broader OpenCore ecosystem.
 
 ---
 

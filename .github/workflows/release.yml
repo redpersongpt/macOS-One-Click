@@ -7,110 +7,75 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. v2.1.3-beta)'
+        description: 'Release tag (e.g. v4.0.0)'
         required: true
-        default: 'v2.3.0'
+        default: 'v4.0.0'
 
 jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      # Pin to latest stable — verify at https://github.com/actions/checkout/releases if builds break
-      - uses: actions/checkout@v6
-      # Pin to latest stable — verify at https://github.com/actions/setup-node/releases if builds break
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
       - run: npm ci
-      - name: Verify renderer types
-        run: npm run lint
-      - name: Verify Electron types
-        run: npx tsc -p electron/tsconfig.json --noEmit
+      - name: Type check frontend
+        run: npx tsc --noEmit
       - name: Run tests
         run: npm test
-      - name: Build application bundles
-        run: npm run build
 
   build-linux:
     needs: verify
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
-      # Pin to latest stable — verify at https://github.com/actions/checkout/releases if builds break
-      - uses: actions/checkout@v6
-      # Pin to latest stable — verify at https://github.com/actions/setup-node/releases if builds break
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-      - run: npm ci
+      - uses: dtolnay/rust-toolchain@stable
       - name: Install Linux build dependencies
-        run: sudo apt-get install -y rpm fakeroot dpkg
-      - name: Build application bundles
-        run: npm run build
-      - name: Package Linux targets
-        run: npx electron-builder --linux AppImage deb --x64 --publish never
-      # Pin to latest stable — verify at https://github.com/actions/upload-artifact/releases if builds break
-      - uses: actions/upload-artifact@v7
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - run: npm ci
+      - name: Build Tauri app
+        run: npx tauri build
+      - uses: actions/upload-artifact@v4
         with:
           name: linux-packages
           path: |
-            release/*.AppImage
-            release/*.deb
-
-  build-macos:
-    needs: verify
-    runs-on: macos-latest
-    steps:
-      # Pin to latest stable — verify at https://github.com/actions/checkout/releases if builds break
-      - uses: actions/checkout@v6
-      # Pin to latest stable — verify at https://github.com/actions/setup-node/releases if builds break
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 20
-          cache: npm
-      - run: npm ci
-      - name: Build application bundles
-        run: npm run build
-      - name: Package macOS
-        run: npx electron-builder --mac dmg --publish never
-      # Pin to latest stable — verify at https://github.com/actions/upload-artifact/releases if builds break
-      - uses: actions/upload-artifact@v7
-        with:
-          name: macos-installer
-          path: release/*.dmg
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/deb/*.deb
 
   build-windows:
     needs: verify
     runs-on: windows-latest
     steps:
-      # Pin to latest stable — verify at https://github.com/actions/checkout/releases if builds break
-      - uses: actions/checkout@v6
-      # Pin to latest stable — verify at https://github.com/actions/setup-node/releases if builds break
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
+      - uses: dtolnay/rust-toolchain@stable
       - run: npm ci
-      - name: Build application bundles
-        run: npm run build
-      - name: Package Windows
-        run: npx electron-builder --win nsis --x64 --publish never
-      # Pin to latest stable — verify at https://github.com/actions/upload-artifact/releases if builds break
-      - uses: actions/upload-artifact@v7
+      - name: Build Tauri app
+        run: npx tauri build
+      - uses: actions/upload-artifact@v4
         with:
           name: windows-installer
-          path: release/*.exe
+          path: src-tauri/target/release/bundle/nsis/*.exe
 
   publish-release:
-    needs: [build-linux, build-macos, build-windows]
-    if: needs.build-linux.result == 'success' && needs.build-macos.result == 'success' && needs.build-windows.result == 'success'
+    needs: [build-linux, build-windows]
+    if: needs.build-linux.result == 'success' && needs.build-windows.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      # Pin to latest stable — verify at https://github.com/actions/download-artifact/releases if builds break
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@v4
         with:
           path: release-artifacts
           merge-multiple: true
@@ -129,14 +94,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${{ steps.tag.outputs.name }}"
-          mapfile -t files < <(find release-artifacts -type f | sort)
+          mapfile -t files < <(find release-artifacts -type f \( -name "*.AppImage" -o -name "*.deb" -o -name "*.exe" \) | sort)
           if [ "${#files[@]}" -eq 0 ]; then
             echo "No release artifacts found."
             exit 1
           fi
-          # Upload assets to existing release, or create new release if none exists.
-          # This avoids the --clobber flag (unsupported in older gh) and the
-          # delete+create race condition.
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" &>/dev/null; then
             echo "Release $tag already exists — uploading artifacts"
             gh release upload "$tag" "${files[@]}" \

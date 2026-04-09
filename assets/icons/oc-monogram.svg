@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0f0f12"/>
+      <stop offset="100%" stop-color="#09090b"/>
+    </linearGradient>
+    <linearGradient id="text-grad" x1="100" y1="150" x2="412" y2="380" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#e0e0e6"/>
+      <stop offset="50%" stop-color="#3b82f6"/>
+      <stop offset="100%" stop-color="#1d4ed8"/>
+    </linearGradient>
+  </defs>
+  <!-- Background -->
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+  <!-- Subtle border -->
+  <rect x="1" y="1" width="510" height="510" rx="95" fill="none" stroke="#222225" stroke-width="2"/>
+  <!-- OC monogram -->
+  <text x="256" y="310" text-anchor="middle" font-family="Inter, -apple-system, 'Segoe UI', sans-serif" font-size="220" font-weight="700" letter-spacing="-8" fill="url(#text-grad)">OC</text>
+</svg>
