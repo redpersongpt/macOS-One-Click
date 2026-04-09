@@ -195,7 +195,7 @@ fn parse_windows_partitions(output: &str) -> Vec<PartitionInfo> {
 async fn list_usb_linux() -> Result<Vec<DiskInfo>, AppError> {
     let output = shell_output(
         "lsblk",
-        &["-J", "-o", "NAME,SIZE,TYPE,TRAN,MODEL,SERIAL,RM,MOUNTPOINT"],
+        &["-J", "-b", "-o", "NAME,SIZE,TYPE,TRAN,MODEL,SERIAL,RM,MOUNTPOINT"],
         10000,
     )
     .await?;
@@ -224,9 +224,8 @@ async fn list_usb_linux() -> Result<Vec<DiskInfo>, AppError> {
         let serial = dev.get("serial").and_then(|v| v.as_str()).map(String::from);
         let rm = dev.get("rm").and_then(|v| v.as_bool()).unwrap_or(true);
 
-        // Parse size from lsblk SIZE field (e.g., "14.3G")
-        let size_str = dev.get("size").and_then(|v| v.as_str()).unwrap_or("0");
-        let size_bytes = parse_lsblk_size(size_str);
+        // With -b, lsblk returns raw bytes; keep a suffix fallback for safety.
+        let size_bytes = dev.get("size").map(parse_lsblk_size_value).unwrap_or(0);
 
         // Parse partitions
         let children = dev
@@ -240,13 +239,12 @@ async fn list_usb_linux() -> Result<Vec<DiskInfo>, AppError> {
             .filter(|(_, c)| c.get("type").and_then(|v| v.as_str()) == Some("part"))
             .map(|(i, c)| {
                 let part_name = c.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                let part_size_str = c.get("size").and_then(|v| v.as_str()).unwrap_or("0");
                 let mount = c.get("mountpoint").and_then(|v| v.as_str()).map(String::from);
                 PartitionInfo {
                     number: (i + 1) as u32,
                     label: Some(part_name.to_string()),
                     filesystem: None,
-                    size_bytes: parse_lsblk_size(part_size_str),
+                    size_bytes: c.get("size").map(parse_lsblk_size_value).unwrap_or(0),
                     mount_point: mount,
                 }
             })
@@ -285,14 +283,17 @@ fn parse_lsblk_size(s: &str) -> u64 {
     if s.is_empty() {
         return 0;
     }
+    if let Ok(raw_bytes) = s.parse::<u64>() {
+        return raw_bytes;
+    }
     let (num_str, suffix) = if s.ends_with('T') || s.ends_with('t') {
-        (&s[..s.len() - 1], 1_000_000_000_000u64)
+        (&s[..s.len() - 1], 1_099_511_627_776u64)
     } else if s.ends_with('G') || s.ends_with('g') {
-        (&s[..s.len() - 1], 1_000_000_000)
+        (&s[..s.len() - 1], 1_073_741_824)
     } else if s.ends_with('M') || s.ends_with('m') {
-        (&s[..s.len() - 1], 1_000_000)
+        (&s[..s.len() - 1], 1_048_576)
     } else if s.ends_with('K') || s.ends_with('k') {
-        (&s[..s.len() - 1], 1_000)
+        (&s[..s.len() - 1], 1_024)
     } else if s.ends_with('B') || s.ends_with('b') {
         (&s[..s.len() - 1], 1)
     } else {
@@ -300,6 +301,27 @@ fn parse_lsblk_size(s: &str) -> u64 {
     };
 
     num_str.parse::<f64>().map(|n| (n * suffix as f64) as u64).unwrap_or(0)
+}
+
+#[allow(dead_code)]
+fn parse_lsblk_size_value(value: &serde_json::Value) -> u64 {
+    value
+        .as_u64()
+        .or_else(|| value.as_str().map(parse_lsblk_size))
+        .unwrap_or(0)
+}
+
+#[cfg(target_os = "linux")]
+async fn ensure_linux_root() -> Result<(), AppError> {
+    let uid = shell_output("id", &["-u"], 2000).await?;
+    if uid.trim() == "0" {
+        Ok(())
+    } else {
+        Err(AppError::new(
+            "ROOT_REQUIRED",
+            "Flashing on Linux requires elevated privileges. Re-run the app as root before writing a USB drive.",
+        ))
+    }
 }
 
 // ── get_disk_info ────────────────────────────────────────────────────────────
@@ -428,7 +450,7 @@ pub async fn flash_usb(
     info!(device = %device, efi_path = %efi_path, "Starting USB flash");
 
     // 1. Validate token
-    let claims = security.verify_and_extract(&token).await?;
+    let claims = security.verify_and_consume(&token).await?;
 
     // 2. Verify device matches token claims
     if claims.device != device {
@@ -472,10 +494,7 @@ pub async fn flash_usb(
     // 5. Create task for progress tracking
     let (task_id, _cancel_token) = task_registry.create("usb-flash").await;
 
-    // 6. Consume the token (single use)
-    security.consume_token(&claims.nonce).await;
-
-    // 7. Platform-specific flash
+    // 6. Platform-specific flash
     let flash_result = {
         #[cfg(target_os = "windows")]
         {
@@ -657,6 +676,8 @@ async fn flash_linux(
     registry: &Arc<TaskRegistry>,
     app: &AppHandle,
 ) -> Result<(), AppError> {
+    ensure_linux_root().await?;
+
     // Phase 1: Partition with fdisk
     let _ = app.emit("flash:milestone", serde_json::json!({
         "phase": "partition",
@@ -830,4 +851,28 @@ fn copy_directory_recursive(src: &std::path::Path, dst: &std::path::Path) -> Res
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_lsblk_size;
+
+    #[test]
+    fn parses_raw_lsblk_bytes() {
+        assert_eq!(parse_lsblk_size("16008609792"), 16_008_609_792);
+    }
+
+    #[test]
+    fn parses_binary_suffixes() {
+        assert_eq!(parse_lsblk_size("1K"), 1_024);
+        assert_eq!(parse_lsblk_size("1M"), 1_048_576);
+        assert_eq!(parse_lsblk_size("1G"), 1_073_741_824);
+        assert_eq!(parse_lsblk_size("1T"), 1_099_511_627_776);
+    }
+
+    #[test]
+    fn parses_json_number_sizes() {
+        let value = serde_json::json!(16_008_609_792u64);
+        assert_eq!(super::parse_lsblk_size_value(&value), 16_008_609_792);
+    }
 }

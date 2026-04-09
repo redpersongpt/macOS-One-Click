@@ -4,8 +4,8 @@ import { useWizard } from '../stores/wizard';
 import { useHardware } from '../stores/hardware';
 import { useEfi } from '../stores/efi';
 import { useCompatibility } from '../stores/compatibility';
-import { useTasks } from '../stores/tasks';
 import { buildProfile } from '../lib/buildProfile';
+import { formatMacOsLabel } from '../lib/macosVersion';
 import { makeDemoBuildResult } from '../lib/demoData';
 import { onTaskUpdate } from '../bridge/events';
 import { EmptyState } from '../components/feedback/EmptyState';
@@ -45,9 +45,8 @@ const DEMO_PHASES = [
 export default function Build() {
   const { goNext, markCompleted } = useWizard();
   const { hardware, isDemo } = useHardware();
-  const { report: compatReport } = useCompatibility();
+  const { report: compatReport, selectedTargetOs } = useCompatibility();
   const { buildResult, building, error, build, clear, setBuildResult, setError } = useEfi();
-  const handleTaskUpdate = useTasks((s) => s.handleUpdate);
   const timeoutIds = useRef<number[]>([]);
 
   const [currentPhase, setCurrentPhase] = useState<string>('');
@@ -75,8 +74,6 @@ export default function Build() {
     let unlisten: (() => void) | undefined;
     const subscribe = async () => {
       unlisten = await onTaskUpdate((update: TaskUpdate) => {
-        handleTaskUpdate(update);
-
         if (update.kind === 'efi-build' || update.kind === 'efi_build' || update.kind === 'build_efi') {
           if (update.progress != null) {
             setProgress(update.progress);
@@ -109,7 +106,7 @@ export default function Build() {
     };
     subscribe();
     return () => unlisten?.();
-  }, [handleTaskUpdate]);
+  }, []);
 
   // Auto-navigate on build complete
   useEffect(() => {
@@ -122,7 +119,7 @@ export default function Build() {
     }
   }, [buildResult, building, goNext, markCompleted]);
 
-  const targetOs = compatReport?.recommendedOs ?? 'Ventura';
+  const targetOs = selectedTargetOs ?? compatReport?.recommendedOs ?? 'macOS Ventura 13';
 
   const runDemoBuild = useCallback(async () => {
     setError(null);
@@ -158,8 +155,12 @@ export default function Build() {
       void runDemoBuild();
       return;
     }
-    void build(buildProfile(hardware), targetOs);
-  }, [hardware, targetOs, build, clear, isDemo, runDemoBuild]);
+    const profile = {
+      ...buildProfile(hardware),
+      configStrategy: compatReport?.strategy,
+    };
+    void build(profile, targetOs);
+  }, [hardware, targetOs, build, clear, compatReport?.strategy, isDemo, runDemoBuild]);
 
   const handleRetry = () => {
     timeoutIds.current.forEach((id) => window.clearTimeout(id));
@@ -212,6 +213,10 @@ export default function Build() {
         </motion.h2>
         <motion.p variants={itemVariants} className="text-sm text-[--text-tertiary] mb-6">
           OpenCore {buildResult.opencoreVersion} EFI generated successfully.
+        </motion.p>
+
+        <motion.p variants={itemVariants} className="text-[0.75rem] text-[--text-tertiary] mb-4">
+          Target: {formatMacOsLabel(targetOs)}
         </motion.p>
 
         {isDemo && (

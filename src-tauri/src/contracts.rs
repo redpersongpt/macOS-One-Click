@@ -139,12 +139,14 @@ pub struct ChassisInfo {
 pub struct HardwareProfile {
     pub cpu: String,
     pub cpu_vendor: String,
+    pub core_count: Option<u32>,
     pub generation: String,
     pub architecture: String,
     pub codename: String,
     pub gpu: String,
     pub gpu_vendor: String,
     pub gpu_device_id: Option<String>,
+    pub gpu_devices: Option<Vec<HardwareProfileGpuDevice>>,
     pub igpu: Option<String>,
     pub igpu_device_id: Option<String>,
     pub audio_codec: Option<String>,
@@ -153,11 +155,22 @@ pub struct HardwareProfile {
     pub input_type: String,
     pub motherboard: String,
     pub is_laptop: bool,
+    pub is_vm: Option<bool>,
     pub has_discrete_gpu: bool,
     pub has_igpu: bool,
     pub ram_gb: u64,
     pub smbios: Option<String>,
     pub target_os: Option<String>,
+    pub config_strategy: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HardwareProfileGpuDevice {
+    pub name: String,
+    pub vendor_name: Option<String>,
+    pub vendor_id: Option<String>,
+    pub device_id: Option<String>,
 }
 
 // ─── EFI Build ──────────────────────────────────────────────────────────────
@@ -328,6 +341,7 @@ pub struct PersistedState {
 #[serde(rename_all = "camelCase")]
 pub struct CompatibilityReport {
     pub overall: CompatibilityVerdict,
+    pub strategy: Option<String>,
     pub cpu_supported: bool,
     pub gpu_supported: bool,
     pub audio_supported: bool,

@@ -4,10 +4,12 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::Writer;
+use rand::Rng;
 use regex::Regex;
 use std::collections::HashSet;
 use std::io::Cursor;
 use tracing::info;
+use uuid::Uuid;
 
 use crate::error::AppError;
 
@@ -105,6 +107,40 @@ pub fn resolve_audio_layout_id(codec_name: Option<&str>) -> u32 {
         }
     }
     1
+}
+
+struct PlatformIdentity {
+    serial: String,
+    mlb: String,
+    rom: String,
+    system_uuid: String,
+}
+
+fn random_upper_alnum(len: usize) -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let mut rng = rand::rng();
+
+    (0..len)
+        .map(|_| {
+            let index = rng.random_range(0..ALPHABET.len());
+            ALPHABET[index] as char
+        })
+        .collect()
+}
+
+fn generate_platform_identity() -> PlatformIdentity {
+    let serial = format!("OC{}", random_upper_alnum(10));
+    let mlb = format!("OCB{}", random_upper_alnum(14));
+
+    let mut rom_bytes = [0u8; 6];
+    rand::rng().fill(&mut rom_bytes);
+
+    PlatformIdentity {
+        serial,
+        mlb,
+        rom: BASE64.encode(rom_bytes),
+        system_uuid: Uuid::new_v4().to_string().to_uppercase(),
+    }
 }
 
 // ── Quirks ──────────────────────────────────────────────────────────────────
@@ -529,6 +565,15 @@ pub fn get_required_resources(
         }
     }
 
+    let wifi_fam = classify_wifi_chipset_family(wifi_chipset);
+    if architecture == "Intel"
+        && !is_laptop
+        && ["Skylake", "Kaby Lake", "Coffee Lake", "Comet Lake", "Ice Lake", "Rocket Lake", "Alder Lake", "Raptor Lake"].contains(&generation)
+        && wifi_fam == WifiChipsetFamily::Intel
+    {
+        push_kext(&mut kexts, "itlwm.kext");
+    }
+
     // NVMe fix
     if mb.contains("pm981") || mb.contains("pm991") || mb.contains("2200s") || mb.contains("600p") {
         push_kext(&mut kexts, "NVMeFix.kext");
@@ -768,6 +813,7 @@ pub fn generate_config_plist(
 
     let audio_layout_id = audio_layout_id_override.unwrap_or_else(|| resolve_audio_layout_id(audio_codec));
     let sip = get_sip_policy(architecture, generation, target_os, gpu, gpu_devices);
+    let platform_identity = generate_platform_identity();
 
     let mut boot_args = boot_args_input.to_string();
 
@@ -1282,14 +1328,14 @@ pub fn generate_config_plist(
         writer.write_event(Event::Start(BytesStart::new("dict"))).unwrap();
         write_key_bool(&mut writer, "AdviseFeatures", false);
         write_key_bool(&mut writer, "MaxBIOSVersion", false);
-        write_key_string(&mut writer, "MLB", "M000000000001");
+        write_key_string(&mut writer, "MLB", &platform_identity.mlb);
         write_key_integer(&mut writer, "ProcessorType", 0);
-        write_key_data(&mut writer, "ROM", "ESIzAAAA");
+        write_key_data(&mut writer, "ROM", &platform_identity.rom);
         write_key_bool(&mut writer, "SpoofVendor", true);
         write_key_string(&mut writer, "SystemMemoryStatus", "Auto");
         write_key_string(&mut writer, "SystemProductName", smbios);
-        write_key_string(&mut writer, "SystemSerialNumber", "W0000000001");
-        write_key_string(&mut writer, "SystemUUID", "00000000-0000-0000-0000-000000000000");
+        write_key_string(&mut writer, "SystemSerialNumber", &platform_identity.serial);
+        write_key_string(&mut writer, "SystemUUID", &platform_identity.system_uuid);
         writer.write_event(Event::End(BytesEnd::new("dict"))).unwrap();
 
         write_key_bool(&mut writer, "UpdateDataHub", true);

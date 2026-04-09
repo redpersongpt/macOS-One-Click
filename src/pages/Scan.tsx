@@ -14,14 +14,14 @@ export default function Scan() {
     if (!hardware && !scanning) {
       scan();
     }
-  }, []);
+  }, [hardware, scanning, scan]);
 
   // Auto-fallback to demo on error
   useEffect(() => {
     if (error && !hardware) {
       setHardware(DEMO_HARDWARE, true);
     }
-  }, [error]);
+  }, [error, hardware, setHardware]);
 
   const handleContinue = () => {
     markCompleted('scan');

@@ -229,6 +229,44 @@ impl FlashSecurityContext {
         }
     }
 
+    /// Verify token and atomically mark its nonce as consumed.
+    pub async fn verify_and_consume(&self, token: &str) -> Result<FlashConfirmationClaims, AppError> {
+        let result = verify_token_inner(token, &self.secret, &self.session_id);
+        match result {
+            TokenVerifyResult::Pending(claims) => {
+                let now = chrono::Utc::now().timestamp_millis();
+                let mut consumed = self.consumed_tokens.write().await;
+
+                consumed.retain(|c| now - c.consumed_at < CONSUMED_RETENTION_MS);
+
+                if consumed.iter().any(|c| c.nonce == claims.nonce) {
+                    return Err(AppError::new("CONFIRMATION_CONSUMED", "Token has already been consumed"));
+                }
+
+                if now > claims.expires_at {
+                    return Err(AppError::new("CONFIRMATION_EXPIRED", "Token has expired"));
+                }
+
+                consumed.push(ConsumedToken {
+                    nonce: claims.nonce.clone(),
+                    consumed_at: now,
+                });
+
+                info!(nonce = %claims.nonce, "Flash confirmation token verified and consumed");
+                Ok(claims)
+            }
+            TokenVerifyResult::Malformed => {
+                Err(AppError::new("CONFIRMATION_MALFORMED", "Token is malformed"))
+            }
+            TokenVerifyResult::SignatureInvalid => {
+                Err(AppError::new("CONFIRMATION_SIGNATURE_INVALID", "Token signature invalid"))
+            }
+            TokenVerifyResult::SessionMismatch => {
+                Err(AppError::new("CONFIRMATION_SESSION_CHANGED", "Token session mismatch"))
+            }
+        }
+    }
+
     /// Mark a token as consumed (by nonce). Prunes old entries.
     pub async fn consume_token(&self, nonce: &str) {
         let now = chrono::Utc::now().timestamp_millis();

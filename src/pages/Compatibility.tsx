@@ -4,25 +4,8 @@ import { useWizard } from '../stores/wizard';
 import { useHardware } from '../stores/hardware';
 import { useCompatibility } from '../stores/compatibility';
 import { buildProfile } from '../lib/buildProfile';
-import type { CompatibilityReport } from '../bridge/types';
+import { makeDemoCompatibilityReport } from '../lib/demoData';
 import { Loader2, AlertCircle } from 'lucide-react';
-
-// Demo compatibility for when backend isn't available
-function makeDemoReport(): CompatibilityReport {
-  return {
-    overall: 'supported',
-    cpuSupported: true,
-    gpuSupported: true,
-    audioSupported: true,
-    networkSupported: true,
-    recommendedOs: 'Ventura',
-    supportedOsVersions: ['Monterey', 'Ventura', 'Sonoma'],
-    issues: [
-      { component: 'Wi-Fi', severity: 'warning', message: 'Intel AX200 requires itlwm.kext (not native)', workaround: 'itlwm or AirportItlwm will be included automatically' },
-    ],
-    confidence: 0.92,
-  };
-}
 
 export default function Compatibility() {
   const { goNext, markCompleted } = useWizard();
@@ -32,7 +15,7 @@ export default function Compatibility() {
   // In demo mode, skip backend call
   const displayReport = useMemo(() => {
     if (report) return report;
-    if (isDemo) return makeDemoReport();
+    if (isDemo) return makeDemoCompatibilityReport();
     return null;
   }, [report, isDemo]);
 
@@ -40,7 +23,7 @@ export default function Compatibility() {
     if (hardware && !report && !loading && !isDemo) {
       check(buildProfile(hardware));
     }
-  }, [hardware, isDemo]);
+  }, [hardware, report, loading, isDemo, check]);
 
   const handleContinue = () => {
     markCompleted('compatibility');

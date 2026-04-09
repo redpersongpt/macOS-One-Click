@@ -26,7 +26,10 @@ export function FlashReview({
 
   const handlePrepare = async () => {
     await (prepareAction ?? (() => prepareFlash(efiPath)))();
-    setDialogOpen(true);
+    const { flashConfirmation: nextConfirmation } = useDisk.getState();
+    if (nextConfirmation) {
+      setDialogOpen(true);
+    }
   };
 
   const handleConfirm = () => {

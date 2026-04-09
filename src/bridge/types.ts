@@ -95,12 +95,14 @@ export interface ChassisInfo {
 export interface HardwareProfile {
   cpu: string;
   cpuVendor: string;
+  coreCount?: number;
   generation: string;
   architecture: string;
   codename: string;
   gpu: string;
   gpuVendor: string;
   gpuDeviceId?: string;
+  gpuDevices?: HardwareGpuDeviceSummary[];
   igpu?: string;
   igpuDeviceId?: string;
   audioCodec?: string;
@@ -109,11 +111,20 @@ export interface HardwareProfile {
   inputType: string;
   motherboard: string;
   isLaptop: boolean;
+  isVm?: boolean;
   hasDiscreteGpu: boolean;
   hasIgpu: boolean;
   ramGb: number;
   smbios?: string;
   targetOs?: string;
+  configStrategy?: string;
+}
+
+export interface HardwareGpuDeviceSummary {
+  name: string;
+  vendorName?: string;
+  vendorId?: string;
+  deviceId?: string;
 }
 
 // ─── EFI Build ──────────────────────────────────────────────────────────────
@@ -240,6 +251,7 @@ export interface PersistedState {
 
 export interface CompatibilityReport {
   overall: 'supported' | 'partial' | 'unsupported';
+  strategy?: 'canonical' | 'conservative' | 'blocked';
   cpuSupported: boolean;
   gpuSupported: boolean;
   audioSupported: boolean;

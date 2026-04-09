@@ -429,6 +429,8 @@ fn extract_opencore_layout_to_dir(archive_bytes: &[u8], efi_dir: &Path) -> Resul
     for required in [
         Path::new("BOOT/BOOTx64.efi"),
         Path::new("OC/OpenCore.efi"),
+        Path::new("OC/Drivers/OpenCanopy.efi"),
+        Path::new("OC/Drivers/OpenHfsPlus.efi"),
         Path::new("OC/Drivers/OpenRuntime.efi"),
     ] {
         if !staging_dir.join(required).exists() {
@@ -599,6 +601,37 @@ fn remove_plist_dict_containing(xml: &str, target_value: &str) -> String {
     result
 }
 
+fn profile_gpu_devices(
+    profile: &HardwareProfile,
+) -> Option<Vec<crate::domain::rules::HardwareGpuDeviceSummary>> {
+    if let Some(devices) = &profile.gpu_devices {
+        if !devices.is_empty() {
+            return Some(
+                devices
+                    .iter()
+                    .map(|device| crate::domain::rules::HardwareGpuDeviceSummary {
+                        name: device.name.clone(),
+                        vendor_name: device.vendor_name.clone(),
+                        vendor_id: device.vendor_id.clone(),
+                        device_id: device.device_id.clone(),
+                    })
+                    .collect(),
+            );
+        }
+    }
+
+    if !profile.gpu.is_empty() {
+        return Some(vec![crate::domain::rules::HardwareGpuDeviceSummary {
+            name: profile.gpu.clone(),
+            vendor_name: Some(profile.gpu_vendor.clone()),
+            vendor_id: None,
+            device_id: profile.gpu_device_id.clone(),
+        }]);
+    }
+
+    None
+}
+
 #[tauri::command]
 pub async fn build_efi(
     profile: HardwareProfile,
@@ -627,27 +660,16 @@ pub async fn build_efi(
     token.check()?;
 
     // Derive GPU devices summary for the config generator
-    let gpu_devices: Option<Vec<crate::domain::rules::HardwareGpuDeviceSummary>> =
-        if !profile.gpu.is_empty() {
-            Some(vec![crate::domain::rules::HardwareGpuDeviceSummary {
-                name: profile.gpu.clone(),
-                vendor_name: Some(profile.gpu_vendor.clone()),
-                vendor_id: None,
-                device_id: profile.gpu_device_id.clone(),
-            }])
-        } else {
-            None
-        };
+    let gpu_devices = profile_gpu_devices(&profile);
 
-    // Determine strategy from compatibility (use "canonical" default)
-    let strategy = "canonical";
+    let strategy = profile.config_strategy.as_deref().unwrap_or("canonical");
 
     // Generate config.plist
     let config_xml = config_generator::generate_config_plist(
         &profile.architecture,
         &profile.generation,
         profile.is_laptop,
-        false, // is_vm - derived from profile context
+        profile.is_vm.unwrap_or(false),
         &profile.motherboard,
         &target_os,
         &profile.gpu,
@@ -659,7 +681,7 @@ pub async fn build_efi(
         Some(&profile.input_type),
         profile.wifi_chipset.as_deref(),
         strategy,
-        None, // core_count
+        profile.core_count,
     );
 
     let config_xml = match config_xml {
@@ -1048,17 +1070,7 @@ pub async fn check_compatibility(profile: HardwareProfile) -> Result<Compatibili
         "Checking hardware compatibility"
     );
 
-    let gpu_devices: Option<Vec<crate::domain::rules::HardwareGpuDeviceSummary>> =
-        if !profile.gpu.is_empty() {
-            Some(vec![crate::domain::rules::HardwareGpuDeviceSummary {
-                name: profile.gpu.clone(),
-                vendor_name: Some(profile.gpu_vendor.clone()),
-                vendor_id: None,
-                device_id: profile.gpu_device_id.clone(),
-            }])
-        } else {
-            None
-        };
+    let gpu_devices = profile_gpu_devices(&profile);
 
     let target_os = profile.target_os.as_deref().unwrap_or("macOS Sequoia 15");
     let ram_str = format!("{} GB", profile.ram_gb);
@@ -1070,7 +1082,7 @@ pub async fn check_compatibility(profile: HardwareProfile) -> Result<Compatibili
         &profile.gpu,
         &gpu_devices,
         profile.is_laptop,
-        false, // is_vm
+        profile.is_vm.unwrap_or(false),
         &profile.motherboard,
         &ram_str,
         target_os,
@@ -1142,6 +1154,11 @@ pub async fn check_compatibility(profile: HardwareProfile) -> Result<Compatibili
 
     Ok(CompatibilityReport {
         overall,
+        strategy: Some(match domain_report.strategy {
+            compatibility::ConfigStrategy::Canonical => "canonical".into(),
+            compatibility::ConfigStrategy::Conservative => "conservative".into(),
+            compatibility::ConfigStrategy::Blocked => "blocked".into(),
+        }),
         cpu_supported,
         gpu_supported,
         audio_supported: true, // Audio rarely blocks
