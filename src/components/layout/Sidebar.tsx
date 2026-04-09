@@ -76,11 +76,11 @@ export default function Sidebar({ onOpenSettings }: SidebarProps) {
         <div className="flex items-center justify-between">
           <button
             onClick={onOpenSettings}
-            className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[#5a5a62] transition-colors hover:bg-[#141416] hover:text-[#dadadf]"
+            className="flex h-8 w-8 items-center justify-center rounded-[6px] text-[#a0a0a8] transition-all duration-150 hover:bg-[#1e1e22] hover:text-[#f0f0f2] hover:shadow-[0_0_8px_rgba(255,255,255,0.06)] active:scale-95 cursor-pointer"
             aria-label="Open settings"
             title="Settings"
           >
-            <Settings2 size={13} />
+            <Settings2 size={16} />
           </button>
           <span className="text-[9px] text-[#2a2a30] tracking-wide">v5.0.0</span>
         </div>

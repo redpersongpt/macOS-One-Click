@@ -49,7 +49,7 @@ export function Modal({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15, ease: 'easeOut' }}
-            className="fixed inset-0 z-50 bg-black/60"
+            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm"
             onClick={onClose}
             aria-hidden
           />
@@ -67,8 +67,8 @@ export function Modal({
               exit={{ opacity: 0, scale: 0.97, y: 4 }}
               transition={{ duration: 0.2, ease: 'easeOut' }}
               className={[
-                'relative w-full rounded-lg',
-                'bg-[--surface-2] border border-[--border]',
+                'relative w-full rounded-lg shadow-2xl',
+                'bg-[#141416] border border-[--border]',
                 'flex flex-col',
                 width,
               ].join(' ')}

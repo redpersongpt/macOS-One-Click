@@ -145,18 +145,30 @@ export default function Settings({ open, onClose, onOpenTroubleshoot }: Settings
       const [version, sid, tail] = await Promise.all([
         getVersion(),
         api.logGetSessionId(),
-        api.logGetTail(80),
+        api.logGetTail(200),
       ]);
+      // Filter out noisy TRACE lines, keep only INFO/WARN/ERROR
+      const filteredLog = tail
+        .split('\n')
+        .filter((line) => /\[(INFO|WARN|ERROR)\]/.test(line))
+        .slice(-20)
+        .join('\n');
+
       diagData = [
         `OpCore-OneClick v${version}`,
         `Session: ${sid}`,
         `Platform: ${navigator.platform}`,
         `Date: ${new Date().toISOString()}`,
         '',
-        tail,
+        filteredLog || '(no significant log entries)',
       ].join('\n');
     } catch {
       diagData = 'Failed to collect diagnostics';
+    }
+
+    // Keep URL under GitHub's ~8000 char limit
+    if (diagData.length > 1500) {
+      diagData = diagData.slice(0, 1500) + '\n... (truncated)';
     }
 
     const title = encodeURIComponent('Bug Report: [describe your issue]');
@@ -302,7 +314,7 @@ export default function Settings({ open, onClose, onOpenTroubleshoot }: Settings
             </p>
             <div className="mt-4 flex gap-2">
               <Button
-                variant="primary"
+                variant="secondary"
                 onClick={handleExportDiagnostics}
                 loading={exporting}
                 leadingIcon={!exporting ? <FileDown size={14} /> : undefined}
