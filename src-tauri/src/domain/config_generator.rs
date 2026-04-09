@@ -574,9 +574,51 @@ pub fn get_required_resources(
         push_kext(&mut kexts, "itlwm.kext");
     }
 
-    // NVMe fix
-    if mb.contains("pm981") || mb.contains("pm991") || mb.contains("2200s") || mb.contains("600p") {
+    // Bluetooth — paired with wifi chipset family
+    match classify_wifi_chipset_family(wifi_chipset) {
+        WifiChipsetFamily::Intel => {
+            push_kext(&mut kexts, "IntelBluetoothFirmware.kext");
+            push_kext(&mut kexts, "BlueToolFixup.kext");
+        }
+        WifiChipsetFamily::Broadcom => {
+            push_kext(&mut kexts, "BrcmPatchRAM3.kext");
+            push_kext(&mut kexts, "BrcmFirmwareData.kext");
+            push_kext(&mut kexts, "BlueToolFixup.kext");
+        }
+        _ => {}
+    }
+
+    // NVMe fix — include by default for common problematic controllers
+    let storage_lower = mb.clone(); // mb already lowercased
+    let nvme_problem = storage_lower.contains("pm981") || storage_lower.contains("pm991")
+        || storage_lower.contains("2200s") || storage_lower.contains("600p")
+        || storage_lower.contains("970 evo") || storage_lower.contains("980 pro")
+        || storage_lower.contains("990 pro") || storage_lower.contains("sn750")
+        || storage_lower.contains("sn770") || storage_lower.contains("sn850");
+    if nvme_problem {
         push_kext(&mut kexts, "NVMeFix.kext");
+    }
+
+    // Ethernet — select based on chipset instead of always adding both
+    if architecture == "Intel" && !is_laptop {
+        let eth_lower = wifi_chipset.unwrap_or("").to_lowercase();
+        if eth_lower.contains("realtek") || eth_lower.contains("rtl8125") || eth_lower.contains("2.5g") {
+            push_kext(&mut kexts, "LucyRTL8125Ethernet.kext");
+        }
+    }
+
+    // CPUFriend for laptop power management
+    if is_laptop && architecture == "Intel"
+        && ["Haswell", "Broadwell", "Skylake", "Kaby Lake", "Coffee Lake", "Comet Lake", "Ice Lake"].contains(&generation)
+    {
+        push_kext(&mut kexts, "CPUFriend.kext");
+    }
+
+    // XHCI-unsupported for older Intel chipsets without native XHCI
+    if architecture == "Intel" && !is_laptop
+        && ["Haswell", "Broadwell", "Ivy Bridge", "Sandy Bridge"].contains(&generation)
+    {
+        push_kext(&mut kexts, "XHCI-unsupported.kext");
     }
 
     // OTA
@@ -591,16 +633,18 @@ pub fn get_required_resources(
     let ec_usbx = if is_laptop { "SSDT-EC-USBX-LAPTOP.aml" } else { "SSDT-EC-USBX-DESKTOP.aml" };
     let ec_ssdt = if is_laptop { "SSDT-EC-LAPTOP.aml" } else { "SSDT-EC-DESKTOP.aml" };
     let plug_ssdt = "SSDT-PLUG-DRTNIA.aml";
+    // SSDT-PLUG is unnecessary on macOS 12.3+ (Monterey 12.3 changed XCPM handling)
+    let needs_plug = os_ver < 12.3;
 
     if architecture == "Intel" {
         if ["Alder Lake", "Raptor Lake"].contains(&generation) {
-            push_ssdt(&mut ssdts, plug_ssdt);
+            if needs_plug { push_ssdt(&mut ssdts, plug_ssdt); }
             push_ssdt(&mut ssdts, "SSDT-AWAC.aml");
             push_ssdt(&mut ssdts, ec_usbx);
             if !is_laptop { push_ssdt(&mut ssdts, "SSDT-RHUB.aml"); }
             push_kext(&mut kexts, "CPUTopologyRebuild.kext");
         } else if ["Coffee Lake", "Comet Lake", "Rocket Lake"].contains(&generation) {
-            push_ssdt(&mut ssdts, plug_ssdt);
+            if needs_plug { push_ssdt(&mut ssdts, plug_ssdt); }
             push_ssdt(&mut ssdts, "SSDT-AWAC.aml");
             push_ssdt(&mut ssdts, ec_usbx);
             if !is_laptop && (mb.contains("z390") || mb.contains("z370") || mb.contains("h370")
@@ -610,14 +654,14 @@ pub fn get_required_resources(
             if is_laptop && generation == "Coffee Lake" { push_ssdt(&mut ssdts, "SSDT-PMC.aml"); }
             if !is_laptop && generation == "Comet Lake" && mb.contains("z490") { push_ssdt(&mut ssdts, "SSDT-RHUB.aml"); }
         } else if ["Haswell", "Broadwell"].contains(&generation) {
-            push_ssdt(&mut ssdts, plug_ssdt);
+            if needs_plug { push_ssdt(&mut ssdts, plug_ssdt); }
             push_ssdt(&mut ssdts, ec_ssdt);
         } else if ["Skylake", "Kaby Lake", "Ice Lake"].contains(&generation) {
-            push_ssdt(&mut ssdts, plug_ssdt);
+            if needs_plug { push_ssdt(&mut ssdts, plug_ssdt); }
             push_ssdt(&mut ssdts, ec_usbx);
             if generation == "Ice Lake" { push_ssdt(&mut ssdts, "SSDT-AWAC.aml"); }
         } else if ["Ivy Bridge-E", "Haswell-E", "Broadwell-E", "Cascade Lake-X"].contains(&generation) {
-            if generation != "Ivy Bridge-E" { push_ssdt(&mut ssdts, plug_ssdt); }
+            if generation != "Ivy Bridge-E" && needs_plug { push_ssdt(&mut ssdts, plug_ssdt); }
             if generation == "Ivy Bridge-E" { push_ssdt(&mut ssdts, "SSDT-EC-DESKTOP.aml"); }
             else { push_ssdt(&mut ssdts, "SSDT-EC-USBX-DESKTOP.aml"); }
             push_ssdt(&mut ssdts, "SSDT-UNC.aml");

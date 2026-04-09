@@ -5,12 +5,13 @@ import { useHardware } from '../stores/hardware';
 import { useCompatibility } from '../stores/compatibility';
 import { buildProfile } from '../lib/buildProfile';
 import { makeDemoCompatibilityReport } from '../lib/demoData';
+import { MacOsVersionPicker } from '../components/domain/MacOsVersionPicker';
 import { Loader2, AlertCircle } from 'lucide-react';
 
 export default function Compatibility() {
   const { goNext, markCompleted } = useWizard();
   const { hardware, isDemo } = useHardware();
-  const { report, loading, error, check } = useCompatibility();
+  const { report, loading, error, check, selectedTargetOs, setSelectedTargetOs } = useCompatibility();
 
   // In demo mode, skip backend call
   const displayReport = useMemo(() => {
@@ -204,23 +205,20 @@ export default function Compatibility() {
         ))}
       </div>
 
-      {/* Recommended OS */}
-      {displayReport.recommendedOs && (
+      {/* macOS Version Picker */}
+      {displayReport.supportedOsVersions.length > 0 && (
         <motion.div
-          className="rounded-[6px] bg-[#0d0d0f] border border-[#1a1a1d] px-3.5 py-2.5 mb-4"
+          className="rounded-[6px] bg-[#0d0d0f] border border-[#1a1a1d] px-3.5 py-3 mb-4"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.35 }}
         >
-          <span className="text-[11px] text-[#3e3e44] uppercase tracking-wide">Recommended</span>
-          <p className="text-[13px] text-[#dadadf] mt-0.5">
-            macOS {displayReport.recommendedOs}
-          </p>
-          {displayReport.supportedOsVersions.length > 1 && (
-            <p className="text-[11px] text-[#3e3e44] mt-1">
-              Also: {displayReport.supportedOsVersions.filter(v => v !== displayReport.recommendedOs).join(', ')}
-            </p>
-          )}
+          <MacOsVersionPicker
+            versions={displayReport.supportedOsVersions}
+            selected={selectedTargetOs}
+            recommended={displayReport.recommendedOs}
+            onSelect={setSelectedTargetOs}
+          />
         </motion.div>
       )}
 

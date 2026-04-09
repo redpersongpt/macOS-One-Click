@@ -85,8 +85,8 @@ export function makeDemoCompatibilityReport(): CompatibilityReport {
     gpuSupported: true,
     audioSupported: true,
     networkSupported: true,
-    recommendedOs: 'Ventura',
-    supportedOsVersions: ['Monterey', 'Ventura', 'Sonoma'],
+    recommendedOs: 'Sonoma',
+    supportedOsVersions: ['Monterey', 'Ventura', 'Sonoma', 'Sequoia'],
     issues: [
       {
         component: 'Wi-Fi',
