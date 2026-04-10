@@ -1,0 +1,29 @@
+name: Feature request
+description: Suggest an improvement for OpCore-OneClick
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      placeholder: Right now the app cannot...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      placeholder: I would like the app to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Extra context
+      description: Hardware details, screenshots, links, or prior art
+    validations:
+      required: false

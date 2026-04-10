@@ -1,0 +1,80 @@
+name: Bug report
+description: Report a reproducible problem in OpCore-OneClick
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Please make this reproducible.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the failure in one or two paragraphs.
+      placeholder: The EFI build fails after kext download and the app shows...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the app
+        2. Scan hardware
+        3. Go to Build
+        4. Click Start Build
+        5. Observe the failure
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: dropdown
+    id: host_os
+    attributes:
+      label: Host OS
+      options:
+        - Windows
+        - Linux
+        - macOS
+    validations:
+      required: true
+
+  - type: input
+    id: app_version
+    attributes:
+      label: App version
+      placeholder: 4.0.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Hardware
+      description: CPU, GPU(s), motherboard or laptop model, network chipset, storage model if relevant
+      placeholder: |
+        CPU: Intel Core i7-10700K
+        GPU: AMD RX 6600 + Intel UHD 630
+        Motherboard: ASUS Z490...
+        Wi-Fi: Intel AX200
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Paste the relevant error, log tail, or screenshots.
+      render: shell
+    validations:
+      required: false

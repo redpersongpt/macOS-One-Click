@@ -58,6 +58,12 @@ It scans the machine, checks the hardware path, builds the EFI, downloads recove
 
 **[Download the latest release](https://github.com/redpersongpt/OpCore-OneClick/releases/latest)**
 
+## Project Policies
+
+- [Contributing guide](CONTRIBUTING.md)
+- [Code of conduct](CODE_OF_CONDUCT.md)
+- [Security policy](SECURITY.md)
+
 ## Acknowledgements
 
 Built on the work of [Acidanthera](https://github.com/acidanthera) and the broader OpenCore ecosystem.
